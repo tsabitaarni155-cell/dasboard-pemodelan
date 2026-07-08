@@ -2,4 +2,4 @@ streamlit
 numpy
 pandas
 plotly
-graphviz
+graphviz>=0.20
