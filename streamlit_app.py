@@ -1497,8 +1497,7 @@ st.html("""
 # ============================================================
 
 with st.sidebar:
-    st.html("## Informasi Project"
-    )
+    st.subheader("Informasi Project")
 
     st.caption(
         "Objek: antrean pembelian tiket "
@@ -1677,7 +1676,7 @@ with overview_tab:
     )
 
     with problem_column:
-        st.markdown(
+        st.html(
             """
             <div class="box">
                 <h3>
