@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Dict, Tuple
@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import simpy
 import streamlit as st
 
 
@@ -15,292 +16,406 @@ import streamlit as st
 # ============================================================
 
 st.set_page_config(
-    page_title="Dashboard Akademik ABM CBT",
-    page_icon="🧠",
+    page_title="Dashboard Kiosk Bioskop",
+    page_icon="🎟️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
 # ============================================================
-# STYLE DASHBOARD
+# KONFIGURASI SKENARIO
+# ============================================================
+
+SCENARIOS = [
+    "Tanpa Intervensi",
+    "Intervensi Reaktif",
+    "Intervensi Preventif",
+    "Beban Tinggi",
+]
+
+CONFIGS: Dict[str, Dict[str, float | int | str]] = {
+    "Tanpa Intervensi": {
+        "scenario_type": "base",
+        "num_kiosks": 2,
+        "mean_interarrival_time": 3.0,
+        "mean_service_time": 4.0,
+        "patience_time": 12.0,
+    },
+    "Intervensi Reaktif": {
+        "scenario_type": "reactive",
+        "num_kiosks": 2,
+        "mean_interarrival_time": 3.0,
+        "mean_service_time": 4.0,
+        "patience_time": 12.0,
+    },
+    "Intervensi Preventif": {
+        "scenario_type": "preventive",
+        "num_kiosks": 3,
+        "mean_interarrival_time": 3.0,
+        "mean_service_time": 3.6,
+        "patience_time": 12.0,
+    },
+    "Beban Tinggi": {
+        "scenario_type": "high_load",
+        "num_kiosks": 2,
+        "mean_interarrival_time": 2.0,
+        "mean_service_time": 4.5,
+        "patience_time": 10.0,
+    },
+}
+
+DESCRIPTIONS = {
+    "Tanpa Intervensi": (
+        "Kondisi dasar dengan dua kiosk dan tanpa strategi tambahan."
+    ),
+    "Intervensi Reaktif": (
+        "Pelayanan dipercepat ketika antrean mencapai ambang tertentu."
+    ),
+    "Intervensi Preventif": (
+        "Kapasitas disiapkan sejak awal melalui tiga kiosk dan "
+        "pelayanan yang lebih cepat."
+    ),
+    "Beban Tinggi": (
+        "Kondisi ramai dengan kedatangan lebih cepat dan "
+        "batas kesabaran pelanggan lebih rendah."
+    ),
+}
+
+COLORS = {
+    "Tanpa Intervensi": "#475569",
+    "Intervensi Reaktif": "#2563EB",
+    "Intervensi Preventif": "#0F766E",
+    "Beban Tinggi": "#C2410C",
+}
+
+
+# ============================================================
+# HASIL ACUAN DARI NOTEBOOK PROJECT
+# 100 ITERASI MONTE CARLO PER SKENARIO
+# ============================================================
+
+NOTEBOOK_RESULTS = pd.DataFrame(
+    [
+        {
+            "scenario": "Tanpa Intervensi",
+            "total_arrivals": 158.91,
+            "served_customers": 158.43,
+            "abandoned_customers": 0.48,
+            "avg_wait_time": 1.572541,
+            "avg_queue_length": 0.537958,
+            "max_queue_length": 5.16,
+            "utilization_percent": 66.530257,
+            "throughput_per_hour": 19.80375,
+            "abandonment_percent": 0.283632,
+        },
+        {
+            "scenario": "Intervensi Reaktif",
+            "total_arrivals": 159.46,
+            "served_customers": 158.92,
+            "abandoned_customers": 0.54,
+            "avg_wait_time": 1.673533,
+            "avg_queue_length": 0.573833,
+            "max_queue_length": 5.30,
+            "utilization_percent": 66.652307,
+            "throughput_per_hour": 19.86500,
+            "abandonment_percent": 0.322663,
+        },
+        {
+            "scenario": "Intervensi Preventif",
+            "total_arrivals": 160.79,
+            "served_customers": 160.79,
+            "abandoned_customers": 0.00,
+            "avg_wait_time": 0.111570,
+            "avg_queue_length": 0.038521,
+            "max_queue_length": 2.26,
+            "utilization_percent": 36.510208,
+            "throughput_per_hour": 20.09875,
+            "abandonment_percent": 0.000000,
+        },
+        {
+            "scenario": "Beban Tinggi",
+            "total_arrivals": 234.39,
+            "served_customers": 199.67,
+            "abandoned_customers": 34.72,
+            "avg_wait_time": 5.797899,
+            "avg_queue_length": 2.892875,
+            "max_queue_length": 10.40,
+            "utilization_percent": 94.430388,
+            "throughput_per_hour": 24.95875,
+            "abandonment_percent": 14.554703,
+        },
+    ]
+)
+
+
+# ============================================================
+# CSS DAN TEMA VISUAL
 # ============================================================
 
 st.markdown(
     """
     <style>
     :root {
-        --navy: #102a43;
-        --blue: #1f6f8b;
-        --teal: #2cb1bc;
-        --ink: #243b53;
-        --muted: #627d98;
-        --line: #d9e2ec;
-        --soft: #f5f9fb;
+        --navy: #102A43;
+        --blue: #2563EB;
+        --gold: #D6A84B;
+        --teal: #0F766E;
+        --ink: #1E293B;
+        --muted: #64748B;
+        --line: #DCE3EA;
+        --paper: #F5F7FA;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(
+                circle at 92% 0%,
+                rgba(214, 168, 75, 0.12),
+                transparent 24rem
+            ),
+            linear-gradient(
+                180deg,
+                #FBFCFE 0%,
+                #F4F6F9 100%
+            );
     }
 
     .main .block-container {
-        max-width: 1450px;
-        padding-top: 1.2rem;
+        max-width: 1480px;
+        padding-top: 1.1rem;
         padding-bottom: 3rem;
     }
 
     h1, h2, h3 {
         color: var(--navy);
-        letter-spacing: -0.02em;
+        letter-spacing: -0.025em;
     }
 
     .hero {
-        background: linear-gradient(
-            135deg,
-            #102a43 0%,
-            #1f6f8b 62%,
-            #2cb1bc 100%
-        );
-        padding: 28px 32px;
+        position: relative;
+        overflow: hidden;
         border-radius: 22px;
+        padding: 30px 34px;
+        background:
+            linear-gradient(
+                115deg,
+                #0F2742 0%,
+                #163D63 65%,
+                #1D4ED8 100%
+            );
+        box-shadow:
+            0 18px 45px rgba(15, 39, 66, 0.18);
         color: white;
-        box-shadow: 0 16px 36px rgba(16, 42, 67, 0.18);
-        margin-bottom: 16px;
+        margin-bottom: 1rem;
+    }
+
+    .hero::after {
+        content: "";
+        position: absolute;
+        width: 245px;
+        height: 245px;
+        border:
+            34px solid rgba(214, 168, 75, 0.16);
+        border-radius: 50%;
+        right: -65px;
+        top: -95px;
+    }
+
+    .hero small {
+        color: #F4D68A;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
     }
 
     .hero h1 {
         color: white;
-        margin: 0.25rem 0 0.45rem;
-        font-size: 2.05rem;
+        margin: 0.45rem 0 0.5rem;
+        font-size:
+            clamp(1.8rem, 3vw, 2.6rem);
     }
 
     .hero p {
+        max-width: 1040px;
+        color: rgba(255, 255, 255, 0.88);
+        line-height: 1.65;
         margin: 0;
-        max-width: 1100px;
-        line-height: 1.6;
-        color: rgba(255, 255, 255, 0.92);
     }
 
-    .badge {
-        display: inline-block;
-        padding: 5px 11px;
+    .tags {
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+    }
+
+    .tag {
+        padding: 0.32rem 0.68rem;
+        border:
+            1px solid rgba(255, 255, 255, 0.2);
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.14);
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        margin: 0 6px 6px 0;
-        font-size: 0.8rem;
+        background:
+            rgba(255, 255, 255, 0.08);
+        font-size: 0.75rem;
         font-weight: 700;
     }
 
-    .card {
-        background: white;
-        border: 1px solid var(--line);
+    .metric-card {
+        background:
+            rgba(255, 255, 255, 0.96);
+        border:
+            1px solid var(--line);
+        border-top:
+            4px solid var(--gold);
         border-radius: 16px;
         padding: 16px 18px;
-        box-shadow: 0 7px 20px rgba(16, 42, 67, 0.06);
-        min-height: 115px;
+        min-height: 118px;
+        box-shadow:
+            0 8px 24px rgba(15, 39, 66, 0.06);
     }
 
-    .m-label {
-        font-size: 0.78rem;
+    .metric-label {
         color: var(--muted);
+        font-size: 0.72rem;
         font-weight: 800;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.065em;
     }
 
-    .m-value {
-        font-size: 1.55rem;
+    .metric-value {
         color: var(--navy);
+        font-size: 1.55rem;
         font-weight: 850;
-        margin-top: 5px;
         line-height: 1.15;
+        margin-top: 0.35rem;
     }
 
-    .m-note {
-        font-size: 0.84rem;
+    .metric-note {
         color: var(--muted);
-        margin-top: 5px;
+        font-size: 0.8rem;
+        margin-top: 0.42rem;
+    }
+
+    .box {
+        background: white;
+        border:
+            1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px 20px;
+        box-shadow:
+            0 6px 18px rgba(15, 39, 66, 0.04);
+        height: 100%;
+    }
+
+    .box h3 {
+        margin-top: 0;
+        font-size: 1.05rem;
     }
 
     .formula {
-        background: #f0f7fa;
-        border-left: 5px solid var(--teal);
+        background: #F1F5F9;
+        border-left:
+            5px solid var(--blue);
         border-radius: 12px;
-        padding: 15px 18px;
-        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-        color: var(--navy);
-        margin-bottom: 16px;
-    }
-
-    .notice {
-        background: #fff8e6;
-        border: 1px solid #f4cf6a;
-        border-radius: 14px;
-        padding: 13px 16px;
-        color: #5c3d00;
-        margin-bottom: 14px;
-    }
-
-    .info-box {
-        background: #f0f7fa;
-        border: 1px solid #bee3ea;
-        border-radius: 14px;
         padding: 14px 16px;
-        color: #102a43;
-        margin-bottom: 14px;
+        font-family:
+            ui-monospace,
+            SFMono-Regular,
+            Consolas,
+            monospace;
+        line-height: 1.65;
     }
 
-    .foot {
-        border-top: 1px solid var(--line);
-        padding-top: 12px;
-        margin-top: 26px;
-        color: var(--muted);
-        font-size: 0.84rem;
+    .flow {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 0.5rem 0;
     }
 
-    section[data-testid="stSidebar"] {
-        background: #f7fafc;
+    .node {
+        padding: 0.55rem 0.78rem;
+        border-radius: 10px;
+        border: 1px solid #CBD5E1;
+        background: #F8FAFC;
+        color: #1E293B;
+        font-size: 0.82rem;
+        font-weight: 750;
+    }
+
+    .arrow {
+        color: #94A3B8;
+        font-weight: 900;
+    }
+
+    .insight {
+        border-left:
+            5px solid var(--teal);
+        background: #F0FDFA;
+        color: #134E4A;
+        border-radius: 12px;
+        padding: 13px 16px;
+        margin: 0.75rem 0;
+    }
+
+    .warning {
+        border-left:
+            5px solid #C2410C;
+        background: #FFF7ED;
+        color: #7C2D12;
+        border-radius: 12px;
+        padding: 13px 16px;
+        margin: 0.75rem 0;
     }
 
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
+        gap: 0.45rem;
+        flex-wrap: wrap;
     }
 
     .stTabs [data-baseweb="tab"] {
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding-left: 15px;
-        padding-right: 15px;
+        border:
+            1px solid var(--line);
         background: white;
+        border-radius: 999px;
+        padding: 0.45rem 0.9rem;
+        font-weight: 700;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: #F7F9FC;
+        border-right:
+            1px solid #E2E8F0;
     }
 
     div[data-testid="stDataFrame"] {
-        border: 1px solid #d9e2ec;
-        border-radius: 12px;
+        border:
+            1px solid var(--line);
+        border-radius: 13px;
         overflow: hidden;
     }
 
-    div[data-testid="stDownloadButton"] button {
-        border-radius: 10px;
-        font-weight: 700;
+    div[data-testid="stForm"] {
+        border:
+            1px solid var(--line);
+        border-radius: 16px;
+        background:
+            rgba(255, 255, 255, 0.82);
     }
 
-    div[data-testid="stButton"] button {
-        border-radius: 10px;
-        font-weight: 700;
+    .footer {
+        margin-top: 2rem;
+        padding-top: 1rem;
+        border-top:
+            1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.82rem;
     }
     </style>
     """,
     unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# DATA DAN KONFIGURASI MODEL
-# ============================================================
-
-SCENARIOS = [
-    "Tanpa Intervensi",
-    "Reaktif",
-    "Preventif",
-    "Distorsi Kognitif Tinggi",
-]
-
-SCENARIO_INFO = {
-    "Tanpa Intervensi":
-        "Skenario baseline. Agen menerima stressor tanpa CBT "
-        "atau latihan koping.",
-
-    "Reaktif":
-        "CBT diberikan ketika Anxiety Level telah melampaui "
-        "ambang kecemasan tinggi.",
-
-    "Preventif":
-        "CBT dilakukan secara rutin sejak awal dan secara "
-        "bertahap memperkuat resilience agen.",
-
-    "Distorsi Kognitif Tinggi":
-        "Agen memiliki nilai Cognitive Distortion lebih tinggi "
-        "untuk menguji apakah CBT standar masih memadai.",
-}
-
-STATE_TABLE = pd.DataFrame(
-    {
-        "State": [
-            "Tenang",
-            "Cemas Ringan",
-            "Cemas Tinggi",
-            "Panik",
-            "Pulih",
-        ],
-        "Aturan": [
-            "A < 0.30",
-            "0.30 ≤ A < 0.60",
-            "0.60 ≤ A < 0.80",
-            "A ≥ 0.80",
-            "Pernah panik dan A < 0.30",
-        ],
-        "Interpretasi": [
-            "Agen relatif stabil.",
-            "Tekanan mulai muncul tetapi masih terkendali.",
-            "Agen membutuhkan dukungan atau strategi koping.",
-            "Agen mencapai ambang risiko tinggi pada model.",
-            "Agen kembali stabil setelah episode panik.",
-        ],
-    }
-)
-
-VARIABLE_TABLE = pd.DataFrame(
-    {
-        "Simbol": ["A", "S", "D", "R", "P"],
-        "Variabel": [
-            "Anxiety Level",
-            "Stressor",
-            "Cognitive Distortion",
-            "Resilience",
-            "CBT Protocol",
-        ],
-        "Rentang": [
-            "0.00–1.00",
-            "0.00–0.30",
-            "0.05–1.50",
-            "0.01–0.09",
-            "0.00–1.00",
-        ],
-        "Peran": [
-            "Kondisi kecemasan agen pada waktu t.",
-            "Tekanan eksternal acak dan terjadwal.",
-            "Pengali yang memperbesar dampak stressor.",
-            "Kemampuan pemulihan alami agen.",
-            "Kekuatan intervensi CBT atau latihan koping.",
-        ],
-    }
-)
-
-CHECKLIST_TABLE = pd.DataFrame(
-    {
-        "Ketentuan Tugas": [
-            "State chart kondisi agen",
-            "Variabel numerik A, S, D, R, dan P",
-            "Agen bergerak dan berinteraksi",
-            "Stressor acak dan terjadwal",
-            "Intervensi CBT",
-            "Skenario What-If",
-            "Monte Carlo 1000 iterasi",
-            "Pengolahan hasil simulasi",
-            "Dashboard dan ekspor data",
-            "Uraian luaran HKI",
-        ],
-        "Implementasi": [
-            "Tersedia lima state agen.",
-            "Seluruh variabel dapat diatur melalui sidebar.",
-            "Agen bergerak pada grid dan memiliki kontak sosial.",
-            "Tersedia peluang stressor dan tick stressor terjadwal.",
-            "Tersedia CBT reaktif dan preventif.",
-            "Tersedia empat skenario eksperimen.",
-            "Iterasi dapat diatur sampai 1000.",
-            "Tersedia rata-rata A, panik, waktu pulih, dan ranking.",
-            "Tersedia grafik, CSV, snapshot, dan narasi.",
-            "Tersedia uraian program komputer untuk persiapan HKI.",
-        ],
-    }
 )
 
 
@@ -311,760 +426,1031 @@ CHECKLIST_TABLE = pd.DataFrame(
 def metric_card(
     label: str,
     value: str,
-    note: str = "",
+    note: str,
 ) -> None:
     st.markdown(
         f"""
-        <div class="card">
-            <div class="m-label">{label}</div>
-            <div class="m-value">{value}</div>
-            <div class="m-note">{note}</div>
+        <div class="metric-card">
+            <div class="metric-label">
+                {label}
+            </div>
+
+            <div class="metric-value">
+                {value}
+            </div>
+
+            <div class="metric-note">
+                {note}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def parse_ticks(
-    text: str,
-    max_tick: int,
-) -> Tuple[int, ...]:
-    values = []
-
-    for item in text.replace(";", ",").split(","):
-        try:
-            tick = int(item.strip())
-
-            if 0 <= tick < max_tick:
-                values.append(tick)
-
-        except ValueError:
-            continue
-
-    return tuple(sorted(set(values)))
-
-
-def state_labels(
-    anxiety: np.ndarray,
-    had_panic: np.ndarray,
-) -> np.ndarray:
-    labels = np.where(
-        anxiety < 0.30,
-        "Tenang",
-        np.where(
-            anxiety < 0.60,
-            "Cemas Ringan",
-            np.where(
-                anxiety < 0.80,
-                "Cemas Tinggi",
-                "Panik",
-            ),
-        ),
-    )
-
-    return np.where(
-        (anxiety < 0.30) & had_panic,
-        "Pulih",
-        labels,
-    )
-
-
-def stability_score(
+def ordered(
     dataframe: pd.DataFrame,
 ) -> pd.DataFrame:
     result = dataframe.copy()
 
-    def inverse_minmax(
-        series: pd.Series,
-    ) -> pd.Series:
-        span = float(series.max() - series.min())
-
-        if span < 1e-12:
-            return pd.Series(
-                np.ones(len(series)),
-                index=series.index,
-            )
-
-        return 1.0 - (
-            (series - series.min()) / span
-        )
-
-    result["Skor Stabilitas"] = 100 * (
-        0.38 * inverse_minmax(result["Rata-rata A"])
-        + 0.30 * inverse_minmax(result["Peak % Panik"])
-        + 0.20 * inverse_minmax(result["Waktu Pulih"])
-        + 0.12 * inverse_minmax(result["Final Mean A"])
+    result["scenario"] = pd.Categorical(
+        result["scenario"],
+        categories=SCENARIOS,
+        ordered=True,
     )
 
-    return result
+    return (
+        result
+        .sort_values("scenario")
+        .reset_index(drop=True)
+    )
+
+
+def show_table(
+    dataframe: pd.DataFrame,
+    digits: int = 3,
+) -> None:
+    st.dataframe(
+        dataframe.round(digits),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 # ============================================================
-# FUNGSI SIMULASI
+# DISTRIBUSI WAKTU
 # ============================================================
 
-@st.cache_data(show_spinner=False)
-def simulate_scenario(
-    scenario: str,
-    iterations: int,
-    agents: int,
-    steps: int,
-    grid_size: int,
-    seed: int,
-    stress_prob: float,
-    stress_min: float,
-    stress_max: float,
-    scheduled_ticks: Tuple[int, ...],
-    scheduled_boost: float,
-    mean_r: float,
-    mean_d: float,
-    high_d: float,
-    cbt_strength: float,
-    reactive_threshold: float,
-    preventive_base: float,
-    preventive_boost: float,
-    social_contagion: float,
-    social_support: float,
-    noise_sd: float,
+def generate_service_time(
+    mean_service_time: float,
+    rng: np.random.Generator,
+) -> float:
+    sigma = 0.25
+
+    mu = (
+        np.log(mean_service_time)
+        - 0.5 * sigma**2
+    )
+
+    return max(
+        0.1,
+        float(
+            rng.lognormal(
+                mean=mu,
+                sigma=sigma,
+            )
+        ),
+    )
+
+
+def generate_interarrival_time(
+    mean_interarrival_time: float,
+    rng: np.random.Generator,
+) -> float:
+    return max(
+        0.1,
+        float(
+            rng.exponential(
+                mean_interarrival_time
+            )
+        ),
+    )
+
+
+# ============================================================
+# FUNGSI SIMULASI UTAMA
+# ============================================================
+
+def simulate_kiosk(
+    seed: int = 42,
+    duration: int = 480,
+    num_kiosks: int = 2,
+    mean_interarrival_time: float = 3.0,
+    mean_service_time: float = 4.0,
+    patience_time: float = 12.0,
+    scenario_name: str = "Simulasi",
+    scenario_type: str = "base",
+    reactive_threshold: int = 6,
+    reactive_service_reduction: float = 0.85,
+    preventive_service_reduction: float = 0.90,
 ) -> Tuple[
-    Dict[str, float],
+    dict,
     pd.DataFrame,
     pd.DataFrame,
 ]:
     rng = np.random.default_rng(seed)
 
-    anxiety = np.clip(
-        rng.normal(
-            0.25,
-            0.08,
-            (iterations, agents),
-        ),
-        0.05,
-        0.55,
+    environment = simpy.Environment()
+
+    kiosk = simpy.Resource(
+        environment,
+        capacity=num_kiosks,
     )
 
-    resilience = np.clip(
-        rng.normal(
-            mean_r,
-            0.008,
-            (iterations, agents),
-        ),
-        0.01,
-        0.09,
-    )
+    customers = []
+    queue_records = []
 
-    distortion_center = (
-        high_d
-        if scenario == "Distorsi Kognitif Tinggi"
-        else mean_d
-    )
+    busy_time = 0.0
 
-    distortion = np.clip(
-        rng.normal(
-            distortion_center,
-            0.12,
-            (iterations, agents),
-        ),
-        0.05,
-        1.50,
-    )
+    customer_counter = {
+        "value": 0
+    }
 
-    cbt_response = np.clip(
-        rng.normal(
-            1.0,
-            0.15,
-            (iterations, agents),
-        ),
-        0.70,
-        1.30,
-    )
+    def monitor_queue():
+        while True:
+            queue_records.append(
+                {
+                    "time":
+                        float(environment.now),
 
-    x_position = rng.integers(
-        0,
-        grid_size,
-        (iterations, agents),
-    )
+                    "queue_length":
+                        len(kiosk.queue),
 
-    y_position = rng.integers(
-        0,
-        grid_size,
-        (iterations, agents),
-    )
+                    "in_service":
+                        kiosk.count,
 
-    episode_start = np.full(
-        (iterations, agents),
-        -1,
-        dtype=np.int16,
-    )
-
-    had_panic = np.zeros(
-        (iterations, agents),
-        dtype=bool,
-    )
-
-    recovery_sum = np.zeros(iterations)
-    recovery_count = np.zeros(iterations)
-    panic_episode_count = np.zeros(iterations)
-
-    rows = []
-    scheduled = set(scheduled_ticks)
-
-    iteration_index = np.arange(
-        iterations
-    )[:, None, None]
-
-    for tick in range(steps):
-
-        # ----------------------------------------------------
-        # GERAKAN AGEN
-        # ----------------------------------------------------
-
-        x_position = (
-            x_position
-            + rng.integers(
-                -1,
-                2,
-                (iterations, agents),
+                    "scenario":
+                        scenario_name,
+                }
             )
-        ) % grid_size
 
-        y_position = (
-            y_position
-            + rng.integers(
-                -1,
-                2,
-                (iterations, agents),
-            )
-        ) % grid_size
+            yield environment.timeout(1)
 
-        # ----------------------------------------------------
-        # INTERAKSI SOSIAL
-        # ----------------------------------------------------
+    def customer_process(
+        customer_id: int,
+    ):
+        nonlocal busy_time
 
-        contact_index = rng.integers(
-            0,
-            agents,
-            size=(iterations, agents, 3),
+        arrival_time = float(
+            environment.now
         )
 
-        neighbor_anxiety = anxiety[
-            iteration_index,
-            contact_index,
-        ].mean(axis=2)
+        customer_record = {
+            "customer_id":
+                customer_id,
 
-        contagion_effect = (
-            social_contagion
-            * np.maximum(
-                neighbor_anxiety - 0.65,
+            "scenario":
+                scenario_name,
+
+            "arrival_time":
+                arrival_time,
+
+            "start_service_time":
+                np.nan,
+
+            "departure_time":
+                np.nan,
+
+            "wait_time":
+                np.nan,
+
+            "service_time":
+                np.nan,
+
+            "system_time":
+                np.nan,
+
+            "state":
+                "menunggu",
+
+            "patience_time":
+                patience_time,
+        }
+
+        with kiosk.request() as request:
+            result = yield (
+                request
+                | environment.timeout(
+                    patience_time
+                )
+            )
+
+            if request not in result:
+                customer_record.update(
+                    {
+                        "departure_time":
+                            float(
+                                environment.now
+                            ),
+
+                        "wait_time":
+                            float(
+                                environment.now
+                                - arrival_time
+                            ),
+
+                        "service_time":
+                            0.0,
+
+                        "system_time":
+                            float(
+                                environment.now
+                                - arrival_time
+                            ),
+
+                        "state":
+                            "batal",
+                    }
+                )
+
+                customers.append(
+                    customer_record
+                )
+
+                return
+
+            start_service_time = float(
+                environment.now
+            )
+
+            effective_service_time = (
+                mean_service_time
+            )
+
+            if (
+                scenario_type
+                == "reactive"
+                and len(kiosk.queue)
+                >= reactive_threshold
+            ):
+                effective_service_time *= (
+                    reactive_service_reduction
+                )
+
+            elif (
+                scenario_type
+                == "preventive"
+            ):
+                effective_service_time *= (
+                    preventive_service_reduction
+                )
+
+            service_time = (
+                generate_service_time(
+                    effective_service_time,
+                    rng,
+                )
+            )
+
+            busy_time += service_time
+
+            yield environment.timeout(
+                service_time
+            )
+
+            departure_time = float(
+                environment.now
+            )
+
+            customer_record.update(
+                {
+                    "start_service_time":
+                        start_service_time,
+
+                    "departure_time":
+                        departure_time,
+
+                    "wait_time":
+                        (
+                            start_service_time
+                            - arrival_time
+                        ),
+
+                    "service_time":
+                        service_time,
+
+                    "system_time":
+                        (
+                            departure_time
+                            - arrival_time
+                        ),
+
+                    "state":
+                        "selesai",
+                }
+            )
+
+            customers.append(
+                customer_record
+            )
+
+    def arrival_process():
+        while environment.now < duration:
+            customer_counter["value"] += 1
+
+            environment.process(
+                customer_process(
+                    customer_counter["value"]
+                )
+            )
+
+            yield environment.timeout(
+                generate_interarrival_time(
+                    mean_interarrival_time,
+                    rng,
+                )
+            )
+
+    environment.process(
+        arrival_process()
+    )
+
+    environment.process(
+        monitor_queue()
+    )
+
+    environment.run(
+        until=duration
+    )
+
+    customers_df = pd.DataFrame(
+        customers
+    )
+
+    queue_df = pd.DataFrame(
+        queue_records
+    )
+
+    if customers_df.empty:
+        summary = {
+            "scenario":
+                scenario_name,
+
+            "total_arrivals":
                 0,
-            )
-        )
 
-        support_effect = (
-            social_support
-            * np.maximum(
-                0.35 - neighbor_anxiety,
+            "served_customers":
                 0,
-            )
-        )
 
-        # ----------------------------------------------------
-        # STRESSOR LINGKUNGAN
-        # ----------------------------------------------------
+            "abandoned_customers":
+                0,
 
-        has_stressor = (
-            rng.random(iterations)
-            < stress_prob
-        )
-
-        stressor = np.where(
-            has_stressor,
-            rng.uniform(
-                stress_min,
-                stress_max,
-                iterations,
-            ),
-            0.0,
-        )
-
-        if tick in scheduled:
-            stressor = (
-                stressor
-                + scheduled_boost
-            )
-
-        # ----------------------------------------------------
-        # PROTOKOL CBT
-        # ----------------------------------------------------
-
-        if scenario == "Tanpa Intervensi":
-            protocol = np.zeros_like(
-                anxiety
-            )
-
-        elif scenario == "Reaktif":
-            protocol = np.where(
-                anxiety >= reactive_threshold,
-                0.85,
+            "avg_wait_time":
                 0.0,
-            )
 
-        elif scenario == "Preventif":
-            morning_boost = (
-                preventive_boost
-                if tick % 24 in (0, 1, 2)
-                else 0.0
-            )
+            "avg_system_time":
+                0.0,
 
-            protocol = np.full_like(
-                anxiety,
-                preventive_base
-                + morning_boost,
-            )
+            "avg_queue_length":
+                0.0,
 
-            resilience = np.clip(
-                resilience + 0.00012,
-                0.01,
-                0.09,
-            )
+            "max_queue_length":
+                0.0,
 
-        else:
-            protocol = np.full_like(
-                anxiety,
-                0.45,
-            )
+            "utilization_percent":
+                0.0,
 
-        # ----------------------------------------------------
-        # PERSAMAAN TRANSISI
-        # ----------------------------------------------------
+            "throughput_per_hour":
+                0.0,
 
-        stress_component = (
-            stressor[:, None]
-            * (1 + distortion)
+            "abandonment_percent":
+                0.0,
+
+            "num_kiosks":
+                num_kiosks,
+
+            "mean_interarrival_time":
+                mean_interarrival_time,
+
+            "mean_service_time":
+                mean_service_time,
+
+            "patience_time":
+                patience_time,
+
+            "duration":
+                duration,
+        }
+
+        return (
+            summary,
+            customers_df,
+            queue_df,
         )
 
-        natural_recovery = (
-            resilience
-            * (1 + 0.70 * protocol)
+    served = customers_df[
+        customers_df["state"]
+        == "selesai"
+    ]
+
+    abandoned = customers_df[
+        customers_df["state"]
+        == "batal"
+    ]
+
+    total_customers = len(
+        customers_df
+    )
+
+    served_customers = len(
+        served
+    )
+
+    abandoned_customers = len(
+        abandoned
+    )
+
+    summary = {
+        "scenario":
+            scenario_name,
+
+        "total_arrivals":
+            total_customers,
+
+        "served_customers":
+            served_customers,
+
+        "abandoned_customers":
+            abandoned_customers,
+
+        "avg_wait_time":
+            float(
+                customers_df[
+                    "wait_time"
+                ].mean()
+            ),
+
+        "avg_system_time":
+            float(
+                customers_df[
+                    "system_time"
+                ].mean()
+            ),
+
+        "avg_queue_length":
+            float(
+                queue_df[
+                    "queue_length"
+                ].mean()
+            ),
+
+        "max_queue_length":
+            float(
+                queue_df[
+                    "queue_length"
+                ].max()
+            ),
+
+        "utilization_percent":
+            float(
+                min(
+                    100.0,
+                    (
+                        busy_time
+                        / (
+                            num_kiosks
+                            * duration
+                        )
+                        * 100
+                    ),
+                )
+            ),
+
+        "throughput_per_hour":
+            float(
+                served_customers
+                / (
+                    duration / 60
+                )
+            ),
+
+        "abandonment_percent":
+            float(
+                (
+                    abandoned_customers
+                    / total_customers
+                    * 100
+                )
+                if total_customers > 0
+                else 0
+            ),
+
+        "num_kiosks":
+            num_kiosks,
+
+        "mean_interarrival_time":
+            mean_interarrival_time,
+
+        "mean_service_time":
+            mean_service_time,
+
+        "patience_time":
+            patience_time,
+
+        "duration":
+            duration,
+    }
+
+    return (
+        summary,
+        customers_df,
+        queue_df,
+    )
+
+
+# ============================================================
+# MONTE CARLO
+# ============================================================
+
+@st.cache_data(
+    show_spinner=False
+)
+def run_monte_carlo(
+    n_iterations: int,
+    duration: int,
+    num_kiosks: int,
+    mean_interarrival_time: float,
+    mean_service_time: float,
+    patience_time: float,
+    scenario_name: str,
+    scenario_type: str,
+    start_seed: int,
+    reactive_threshold: int = 6,
+) -> pd.DataFrame:
+    rows = []
+
+    for index in range(
+        n_iterations
+    ):
+        summary, _, _ = simulate_kiosk(
+            seed=(
+                start_seed
+                + index
+            ),
+
+            duration=
+                duration,
+
+            num_kiosks=
+                num_kiosks,
+
+            mean_interarrival_time=
+                mean_interarrival_time,
+
+            mean_service_time=
+                mean_service_time,
+
+            patience_time=
+                patience_time,
+
+            scenario_name=
+                scenario_name,
+
+            scenario_type=
+                scenario_type,
+
+            reactive_threshold=
+                reactive_threshold,
         )
 
-        cbt_reduction = (
-            cbt_strength
-            * protocol
-            * cbt_response
-        )
-
-        noise = rng.normal(
-            0,
-            noise_sd,
-            (iterations, agents),
-        )
-
-        anxiety = np.clip(
-            anxiety
-            + stress_component
-            + contagion_effect
-            - support_effect
-            - natural_recovery
-            - cbt_reduction
-            + noise,
-            0,
-            1,
-        )
-
-        # ----------------------------------------------------
-        # DETEKSI PANIK DAN PEMULIHAN
-        # ----------------------------------------------------
-
-        newly_panic = (
-            (anxiety >= 0.80)
-            & (episode_start == -1)
-        )
-
-        episode_start[newly_panic] = tick
-        had_panic |= newly_panic
-
-        panic_episode_count += (
-            newly_panic.sum(axis=1)
-        )
-
-        recovered = (
-            (anxiety < 0.30)
-            & (episode_start != -1)
-        )
-
-        if recovered.any():
-            duration = (
-                tick - episode_start
-            ).astype(float)
-
-            recovery_sum += (
-                duration * recovered
-            ).sum(axis=1)
-
-            recovery_count += (
-                recovered.sum(axis=1)
-            )
-
-            episode_start[recovered] = -1
-
-        # ----------------------------------------------------
-        # PENCATATAN HASIL PER TICK
-        # ----------------------------------------------------
-
-        mean_per_iteration = (
-            anxiety.mean(axis=1)
-        )
-
-        panic_per_iteration = (
-            (anxiety >= 0.80)
-            .mean(axis=1)
-            * 100
+        summary["iteration"] = (
+            index + 1
         )
 
         rows.append(
-            {
-                "time": tick,
-                "scenario": scenario,
-
-                "mean_A":
-                    float(
-                        mean_per_iteration.mean()
-                    ),
-
-                "q25_A":
-                    float(
-                        np.quantile(
-                            mean_per_iteration,
-                            0.25,
-                        )
-                    ),
-
-                "q75_A":
-                    float(
-                        np.quantile(
-                            mean_per_iteration,
-                            0.75,
-                        )
-                    ),
-
-                "pct_tenang":
-                    float(
-                        (anxiety < 0.30)
-                        .mean()
-                        * 100
-                    ),
-
-                "pct_cemas_ringan":
-                    float(
-                        (
-                            (anxiety >= 0.30)
-                            & (anxiety < 0.60)
-                        )
-                        .mean()
-                        * 100
-                    ),
-
-                "pct_cemas_tinggi":
-                    float(
-                        (
-                            (anxiety >= 0.60)
-                            & (anxiety < 0.80)
-                        )
-                        .mean()
-                        * 100
-                    ),
-
-                "pct_panik":
-                    float(
-                        panic_per_iteration.mean()
-                    ),
-
-                "stressor_S":
-                    float(
-                        stressor.mean()
-                    ),
-
-                "mean_D":
-                    float(
-                        distortion.mean()
-                    ),
-
-                "mean_R":
-                    float(
-                        resilience.mean()
-                    ),
-
-                "mean_P":
-                    float(
-                        protocol.mean()
-                    ),
-
-                "std_A":
-                    float(
-                        anxiety.std()
-                    ),
-            }
+            summary
         )
 
-    # --------------------------------------------------------
-    # EPISODE YANG BELUM PULIH
-    # --------------------------------------------------------
-
-    unresolved = (
-        episode_start != -1
+    return pd.DataFrame(
+        rows
     )
 
-    if unresolved.any():
-        duration = (
-            steps - episode_start
-        ).astype(float)
 
-        recovery_sum += (
-            duration * unresolved
-        ).sum(axis=1)
-
-        recovery_count += (
-            unresolved.sum(axis=1)
-        )
-
-    average_recovery = np.divide(
-        recovery_sum,
-        recovery_count,
-        out=np.zeros_like(recovery_sum),
-        where=recovery_count > 0,
-    )
-
-    history = pd.DataFrame(rows)
-
-    first_risk = history.loc[
-        history["pct_panik"] >= 5,
-        "time",
+def summarize(
+    raw_dataframe: pd.DataFrame,
+) -> pd.DataFrame:
+    metrics = [
+        "total_arrivals",
+        "served_customers",
+        "abandoned_customers",
+        "avg_wait_time",
+        "avg_system_time",
+        "avg_queue_length",
+        "max_queue_length",
+        "utilization_percent",
+        "throughput_per_hour",
+        "abandonment_percent",
     ]
 
-    summary = {
-        "Skenario":
-            scenario,
+    summary = (
+        raw_dataframe
+        .groupby(
+            "scenario",
+            as_index=False,
+        )[metrics]
+        .mean()
+    )
 
-        "Final Mean A":
-            float(
-                history.iloc[-1]["mean_A"]
-            ),
+    return ordered(
+        summary
+    )
 
-        "Rata-rata A":
-            float(
-                history["mean_A"].mean()
-            ),
 
-        "Peak Mean A":
-            float(
-                history["mean_A"].max()
-            ),
+@st.cache_data(
+    show_spinner=False
+)
+def run_all_scenarios(
+    iterations: int,
+    duration: int,
+    reactive_threshold: int,
+) -> Tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+]:
+    frames = []
 
-        "Final % Panik":
-            float(
-                history.iloc[-1]["pct_panik"]
-            ),
+    for index, name in enumerate(
+        SCENARIOS
+    ):
+        config = CONFIGS[name]
 
-        "Rata-rata % Panik":
-            float(
-                history["pct_panik"].mean()
-            ),
+        frame = run_monte_carlo(
+            n_iterations=
+                iterations,
 
-        "Peak % Panik":
-            float(
-                history["pct_panik"].max()
-            ),
+            duration=
+                duration,
 
-        "Waktu Pulih":
-            float(
-                average_recovery.mean()
-            ),
-
-        "Episode Panik":
-            float(
-                panic_episode_count.mean()
-            ),
-
-        "Episode Pulih":
-            float(
-                recovery_count.mean()
-            ),
-
-        "Tick Risiko Awal":
-            int(first_risk.iloc[0])
-            if len(first_risk)
-            else -1,
-
-        "Rata-rata P":
-            float(
-                history["mean_P"].mean()
-            ),
-
-        "Rata-rata D":
-            float(
-                history["mean_D"].mean()
-            ),
-
-        "Rata-rata R":
-            float(
-                history["mean_R"].mean()
-            ),
-    }
-
-    sample = pd.DataFrame(
-        {
-            "x":
-                x_position[0].astype(int),
-
-            "y":
-                y_position[0].astype(int),
-
-            "A":
-                anxiety[0],
-
-            "R":
-                resilience[0],
-
-            "D":
-                distortion[0],
-
-            "state":
-                state_labels(
-                    anxiety[0],
-                    had_panic[0],
+            num_kiosks=
+                int(
+                    config[
+                        "num_kiosks"
+                    ]
                 ),
-        }
+
+            mean_interarrival_time=
+                float(
+                    config[
+                        "mean_interarrival_time"
+                    ]
+                ),
+
+            mean_service_time=
+                float(
+                    config[
+                        "mean_service_time"
+                    ]
+                ),
+
+            patience_time=
+                float(
+                    config[
+                        "patience_time"
+                    ]
+                ),
+
+            scenario_name=
+                name,
+
+            scenario_type=
+                str(
+                    config[
+                        "scenario_type"
+                    ]
+                ),
+
+            start_seed=
+                (
+                    1000
+                    + index * 10000
+                ),
+
+            reactive_threshold=
+                reactive_threshold,
+        )
+
+        frames.append(
+            frame
+        )
+
+    raw_results = pd.concat(
+        frames,
+        ignore_index=True,
+    )
+
+    return (
+        summarize(
+            raw_results
+        ),
+        raw_results,
+    )
+
+
+# ============================================================
+# OPTIMASI JUMLAH KIOSK
+# ============================================================
+
+@st.cache_data(
+    show_spinner=False
+)
+def optimize_kiosks(
+    max_kiosk: int,
+    iterations: int,
+    duration: int,
+    interarrival: float,
+    service: float,
+    patience: float,
+) -> Tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+]:
+    frames = []
+
+    for kiosk_count in range(
+        1,
+        max_kiosk + 1,
+    ):
+        frame = run_monte_carlo(
+            n_iterations=
+                iterations,
+
+            duration=
+                duration,
+
+            num_kiosks=
+                kiosk_count,
+
+            mean_interarrival_time=
+                interarrival,
+
+            mean_service_time=
+                service,
+
+            patience_time=
+                patience,
+
+            scenario_name=
+                f"{kiosk_count} Kiosk",
+
+            scenario_type=
+                "base",
+
+            start_seed=
+                (
+                    5000
+                    + kiosk_count * 1000
+                ),
+        )
+
+        frames.append(
+            frame
+        )
+
+    raw_results = pd.concat(
+        frames,
+        ignore_index=True,
+    )
+
+    summary = (
+        raw_results
+        .groupby(
+            "num_kiosks",
+            as_index=False,
+        )
+        .agg(
+            avg_wait_time=(
+                "avg_wait_time",
+                "mean",
+            ),
+
+            avg_queue_length=(
+                "avg_queue_length",
+                "mean",
+            ),
+
+            utilization_percent=(
+                "utilization_percent",
+                "mean",
+            ),
+
+            throughput_per_hour=(
+                "throughput_per_hour",
+                "mean",
+            ),
+
+            abandonment_percent=(
+                "abandonment_percent",
+                "mean",
+            ),
+        )
     )
 
     return (
         summary,
-        history,
-        sample,
+        raw_results,
     )
 
 
-@st.cache_data(show_spinner=False)
-def run_experiment(
-    selected: Tuple[str, ...],
-    iterations: int,
-    params: Dict,
-) -> Tuple[
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-]:
-    summaries = []
-    histories = []
-    samples = []
+# ============================================================
+# ANALISIS SENSITIVITAS
+# ============================================================
 
-    for index, scenario in enumerate(
-        selected
-    ):
-        summary, history, sample = (
-            simulate_scenario(
-                scenario=scenario,
-                iterations=iterations,
-                seed=(
-                    int(params["seed"])
-                    + index * 97
-                ),
-                **{
-                    key: value
-                    for key, value
-                    in params.items()
-                    if key != "seed"
-                },
-            )
-        )
-
-        summaries.append(summary)
-        histories.append(history)
-
-        sample.insert(
-            0,
-            "scenario",
-            scenario,
-        )
-
-        samples.append(sample)
-
-    return (
-        pd.DataFrame(summaries),
-
-        pd.concat(
-            histories,
-            ignore_index=True,
-        ),
-
-        pd.concat(
-            samples,
-            ignore_index=True,
-        ),
-    )
-
-
-@st.cache_data(show_spinner=False)
-def run_sensitivity(
-    selected: Tuple[str, ...],
+@st.cache_data(
+    show_spinner=False
+)
+def sensitivity_analysis(
     parameter: str,
-    values: Tuple[float, ...],
-    params: Dict,
+    values: Tuple[
+        float,
+        ...
+    ],
     iterations: int,
+    kiosk_count: int,
 ) -> pd.DataFrame:
     rows = []
 
-    mapping = {
-        "Kekuatan CBT":
-            "cbt_strength",
+    for index, value in enumerate(
+        values
+    ):
+        interarrival = 3.0
+        service = 4.0
+        patience = 12.0
 
-        "Peluang Stressor":
-            "stress_prob",
+        if (
+            parameter
+            == "Interval kedatangan"
+        ):
+            interarrival = value
 
-        "Distorsi Kognitif":
-            "mean_d",
+        elif (
+            parameter
+            == "Waktu pelayanan"
+        ):
+            service = value
 
-        "Resilience":
-            "mean_r",
-    }
+        else:
+            patience = value
 
-    for value in values:
-        varied_params = dict(params)
+        raw_results = run_monte_carlo(
+            n_iterations=
+                iterations,
 
-        varied_params[
-            mapping[parameter]
-        ] = float(value)
+            duration=
+                480,
 
-        summary, _, _ = run_experiment(
-            selected,
-            iterations,
-            varied_params,
+            num_kiosks=
+                kiosk_count,
+
+            mean_interarrival_time=
+                interarrival,
+
+            mean_service_time=
+                service,
+
+            patience_time=
+                patience,
+
+            scenario_name=
+                (
+                    f"{parameter} "
+                    f"{value:.2f}"
+                ),
+
+            scenario_type=
+                "base",
+
+            start_seed=
+                (
+                    20000
+                    + index * 1000
+                ),
         )
 
-        for _, row in summary.iterrows():
-            rows.append(
-                {
-                    "Parameter":
-                        parameter,
+        rows.append(
+            {
+                "parameter":
+                    parameter,
 
-                    "Nilai":
-                        float(value),
+                "value":
+                    value,
 
-                    "Skenario":
-                        row["Skenario"],
+                "avg_wait_time":
+                    raw_results[
+                        "avg_wait_time"
+                    ].mean(),
 
-                    "Rata-rata A":
-                        row["Rata-rata A"],
+                "avg_queue_length":
+                    raw_results[
+                        "avg_queue_length"
+                    ].mean(),
 
-                    "Peak % Panik":
-                        row["Peak % Panik"],
+                "utilization_percent":
+                    raw_results[
+                        "utilization_percent"
+                    ].mean(),
 
-                    "Waktu Pulih":
-                        row["Waktu Pulih"],
-                }
-            )
+                "throughput_per_hour":
+                    raw_results[
+                        "throughput_per_hour"
+                    ].mean(),
 
-    return pd.DataFrame(rows)
+                "abandonment_percent":
+                    raw_results[
+                        "abandonment_percent"
+                    ].mean(),
+            }
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+# ============================================================
+# NARASI HASIL OTOMATIS
+# ============================================================
+
+def narrative(
+    summary_dataframe: pd.DataFrame,
+    iterations: int,
+) -> str:
+    best = summary_dataframe.loc[
+        summary_dataframe[
+            "avg_wait_time"
+        ].idxmin()
+    ]
+
+    worst = summary_dataframe.loc[
+        summary_dataframe[
+            "avg_wait_time"
+        ].idxmax()
+    ]
+
+    highest_throughput = (
+        summary_dataframe.loc[
+            summary_dataframe[
+                "throughput_per_hour"
+            ].idxmax()
+        ]
+    )
+
+    return (
+        f"Simulasi menggunakan "
+        f"{iterations} iterasi Monte Carlo "
+        f"per skenario. "
+
+        f"{best['scenario']} memberikan "
+        f"waktu tunggu terendah sebesar "
+        f"{best['avg_wait_time']:.2f} menit "
+        f"dengan pembatalan "
+        f"{best['abandonment_percent']:.2f}%. "
+
+        f"Kondisi paling berat terdapat pada "
+        f"{worst['scenario']} dengan waktu "
+        f"tunggu {worst['avg_wait_time']:.2f} "
+        f"menit dan pembatalan "
+        f"{worst['abandonment_percent']:.2f}%. "
+
+        f"Throughput tertinggi terdapat pada "
+        f"{highest_throughput['scenario']} "
+        f"sebesar "
+        f"{highest_throughput['throughput_per_hour']:.2f} "
+        f"pelanggan per jam. "
+
+        "Hasil ini menunjukkan bahwa "
+        "persiapan kapasitas secara preventif "
+        "lebih stabil daripada menunggu "
+        "antrean memburuk."
+    )
+
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+DEFAULT_SESSION = {
+    "comparison_summary":
+        ordered(
+            NOTEBOOK_RESULTS
+        ),
+
+    "comparison_raw":
+        None,
+
+    "comparison_iterations":
+        100,
+
+    "comparison_source":
+        "Hasil notebook",
+
+    "single_result":
+        None,
+
+    "optimization":
+        None,
+
+    "optimization_raw":
+        None,
+
+    "sensitivity":
+        None,
+}
+
+for key, value in (
+    DEFAULT_SESSION.items()
+):
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # ============================================================
@@ -1074,44 +1460,41 @@ def run_sensitivity(
 st.markdown(
     """
     <div class="hero">
-        <span class="badge">
-            Tugas Besar Pemodelan & Simulasi
-        </span>
-
-        <span class="badge">
-            Agent-Based Modeling
-        </span>
-
-        <span class="badge">
-            CBT Protocol
-        </span>
-
-        <span class="badge">
-            Monte Carlo
-        </span>
+        <small>
+            Tugas Besar Pemodelan dan Simulasi
+        </small>
 
         <h1>
-            Dashboard Akademik Simulasi Kecemasan
-            ABM + Intervensi CBT
+            Simulasi Sistem Antrean
+            Self-Service Kiosk Bioskop
         </h1>
 
         <p>
-            Simulasi membandingkan respons agen heterogen
-            terhadap stressor, distorsi kognitif,
-            resilience, interaksi sosial, serta
-            intervensi CBT reaktif dan preventif.
-            Dashboard menyediakan analisis hasil,
-            ranking skenario, sensitivitas parameter,
-            ekspor data, dan narasi untuk laporan
-            maupun dokumen HKI.
+            Dashboard akademik berbasis
+            Agent-Based Discrete Event Simulation
+            untuk menganalisis waktu tunggu,
+            panjang antrean, utilisasi kiosk,
+            throughput, serta pelanggan yang
+            meninggalkan antrean.
         </p>
-    </div>
 
-    <div class="notice">
-        <b>Catatan etis:</b>
-        aplikasi ini adalah model edukatif,
-        bukan alat diagnosis klinis dan bukan
-        pengganti psikolog atau psikiater.
+        <div class="tags">
+            <span class="tag">
+                Agent-Based Modeling
+            </span>
+
+            <span class="tag">
+                Discrete Event Simulation
+            </span>
+
+            <span class="tag">
+                Monte Carlo
+            </span>
+
+            <span class="tag">
+                What-If Analysis
+            </span>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1123,384 +1506,147 @@ st.markdown(
 # ============================================================
 
 with st.sidebar:
-    st.title("Panel Kontrol")
+    st.markdown(
+        "## Informasi Project"
+    )
 
     st.caption(
-        "Atur parameter simulasi dan pilih "
-        "skenario yang akan dibandingkan."
+        "Objek: antrean pembelian tiket "
+        "melalui self-service kiosk bioskop."
     )
 
-    preset = st.radio(
-        "Mode eksekusi",
-        [
-            "Demo cepat",
-            "Akademik",
-            "Final 1000",
-        ],
-        index=1,
+    st.write(
+        "Hasil acuan: "
+        "**100 iterasi/skenario**"
     )
 
-    defaults = {
-        "Demo cepat":
-            (80, 50, 90),
-
-        "Akademik":
-            (250, 70, 120),
-
-        "Final 1000":
-            (1000, 80, 150),
-    }
-
-    (
-        default_iterations,
-        default_agents,
-        default_steps,
-    ) = defaults[preset]
-
-    st.divider()
-
-    st.subheader("Skenario")
-
-    selected = st.multiselect(
-        "Pilih skenario",
-        SCENARIOS,
-        default=SCENARIOS,
+    st.write(
+        "Durasi acuan: "
+        "**480 menit**"
     )
 
     st.divider()
 
-    st.subheader("Ukuran Simulasi")
-
-    iterations = st.slider(
-        "Iterasi Monte Carlo",
-        min_value=50,
-        max_value=1000,
-        value=default_iterations,
-        step=50,
+    st.markdown(
+        "### Indikator"
     )
 
-    agents = st.slider(
-        "Jumlah agen",
-        min_value=20,
-        max_value=200,
-        value=default_agents,
-        step=10,
+    st.caption(
+        "Waktu tunggu: durasi sebelum "
+        "pelanggan memperoleh kiosk."
     )
 
-    steps = st.slider(
-        "Jumlah tick",
-        min_value=50,
-        max_value=300,
-        value=default_steps,
-        step=10,
+    st.caption(
+        "Utilisasi: persentase kapasitas "
+        "kiosk yang terpakai."
     )
 
-    grid_size = st.slider(
-        "Ukuran grid",
-        min_value=10,
-        max_value=40,
-        value=20,
-        step=2,
+    st.caption(
+        "Throughput: pelanggan selesai "
+        "dilayani per jam."
     )
 
-    seed = st.number_input(
-        "Seed",
-        min_value=1,
-        max_value=999999,
-        value=2026,
+    st.caption(
+        "Abandonment: pelanggan pergi "
+        "karena melewati batas sabar."
     )
 
     st.divider()
-
-    st.subheader("Stressor")
-
-    stress_prob = st.slider(
-        "Peluang stressor",
-        min_value=0.05,
-        max_value=0.80,
-        value=0.35,
-        step=0.01,
-    )
-
-    stress_min = st.slider(
-        "Stressor minimum",
-        min_value=0.00,
-        max_value=0.15,
-        value=0.03,
-        step=0.005,
-        format="%.3f",
-    )
-
-    stress_max = st.slider(
-        "Stressor maksimum",
-        min_value=0.03,
-        max_value=0.30,
-        value=0.11,
-        step=0.005,
-        format="%.3f",
-    )
-
-    tick_text = st.text_input(
-        "Tick stressor terjadwal",
-        "30, 60, 90",
-    )
-
-    scheduled_boost = st.slider(
-        "Boost stressor terjadwal",
-        min_value=0.00,
-        max_value=0.25,
-        value=0.10,
-        step=0.005,
-        format="%.3f",
-    )
-
-    st.divider()
-
-    st.subheader(
-        "Atribut Psikologis"
-    )
-
-    mean_r = st.slider(
-        "Rata-rata Resilience (R)",
-        min_value=0.010,
-        max_value=0.080,
-        value=0.025,
-        step=0.001,
-        format="%.3f",
-    )
-
-    mean_d = st.slider(
-        "Rata-rata Distortion (D)",
-        min_value=0.05,
-        max_value=1.20,
-        value=0.45,
-        step=0.01,
-    )
-
-    high_d = st.slider(
-        "D untuk skenario tinggi",
-        min_value=0.60,
-        max_value=1.50,
-        value=0.95,
-        step=0.01,
-    )
-
-    st.divider()
-
-    st.subheader("Intervensi CBT")
-
-    cbt_strength = st.slider(
-        "Kekuatan CBT",
-        min_value=0.00,
-        max_value=0.12,
-        value=0.04,
-        step=0.005,
-    )
-
-    reactive_threshold = st.slider(
-        "Ambang reaktif",
-        min_value=0.60,
-        max_value=0.95,
-        value=0.80,
-        step=0.01,
-    )
-
-    preventive_base = st.slider(
-        "CBT preventif rutin",
-        min_value=0.00,
-        max_value=0.80,
-        value=0.30,
-        step=0.01,
-    )
-
-    preventive_boost = st.slider(
-        "Boost latihan pagi",
-        min_value=0.00,
-        max_value=0.80,
-        value=0.30,
-        step=0.01,
-    )
-
-    with st.expander(
-        "Parameter sosial dan noise"
-    ):
-        social_contagion = st.slider(
-            "Social contagion",
-            min_value=0.000,
-            max_value=0.060,
-            value=0.020,
-            step=0.002,
-            format="%.3f",
-        )
-
-        social_support = st.slider(
-            "Social support",
-            min_value=0.000,
-            max_value=0.050,
-            value=0.012,
-            step=0.002,
-            format="%.3f",
-        )
-
-        noise_sd = st.slider(
-            "Noise",
-            min_value=0.000,
-            max_value=0.030,
-            value=0.008,
-            step=0.001,
-            format="%.3f",
-        )
 
     st.info(
-        "Gunakan mode Final 1000 "
-        "untuk hasil akhir laporan."
+        "Gunakan 100 iterasi untuk "
+        "mereplikasi notebook. "
+        "Mode 1000 iterasi memerlukan "
+        "waktu proses lebih lama."
     )
 
 
 # ============================================================
-# VALIDASI INPUT
+# KPI UTAMA
 # ============================================================
 
-if not selected:
-    st.warning(
-        "Pilih minimal satu skenario."
-    )
-    st.stop()
-
-if stress_max < stress_min:
-    st.error(
-        "Stressor maksimum harus lebih besar "
-        "atau sama dengan stressor minimum."
-    )
-    st.stop()
-
-
-# ============================================================
-# PARAMETER SIMULASI
-# ============================================================
-
-scheduled_ticks = parse_ticks(
-    tick_text,
-    steps,
+current_summary = (
+    st.session_state[
+        "comparison_summary"
+    ]
 )
 
-params = {
-    "agents":
-        int(agents),
-
-    "steps":
-        int(steps),
-
-    "grid_size":
-        int(grid_size),
-
-    "seed":
-        int(seed),
-
-    "stress_prob":
-        float(stress_prob),
-
-    "stress_min":
-        float(stress_min),
-
-    "stress_max":
-        float(stress_max),
-
-    "scheduled_ticks":
-        tuple(scheduled_ticks),
-
-    "scheduled_boost":
-        float(scheduled_boost),
-
-    "mean_r":
-        float(mean_r),
-
-    "mean_d":
-        float(mean_d),
-
-    "high_d":
-        float(high_d),
-
-    "cbt_strength":
-        float(cbt_strength),
-
-    "reactive_threshold":
-        float(reactive_threshold),
-
-    "preventive_base":
-        float(preventive_base),
-
-    "preventive_boost":
-        float(preventive_boost),
-
-    "social_contagion":
-        float(social_contagion),
-
-    "social_support":
-        float(social_support),
-
-    "noise_sd":
-        float(noise_sd),
-}
-
-
-# ============================================================
-# MENJALANKAN SIMULASI
-# ============================================================
-
-with st.spinner(
-    "Menjalankan simulasi ABM dan Monte Carlo..."
-):
-    summary, history, sample = run_experiment(
-        tuple(selected),
-        int(iterations),
-        params,
-    )
-
-ranked = (
-    stability_score(summary)
-    .sort_values(
-        "Skor Stabilitas",
-        ascending=False,
-    )
-    .reset_index(drop=True)
+best_scenario = (
+    current_summary.loc[
+        current_summary[
+            "avg_wait_time"
+        ].idxmin()
+    ]
 )
 
-best = ranked.iloc[0]
+worst_cancel = (
+    current_summary.loc[
+        current_summary[
+            "abandonment_percent"
+        ].idxmax()
+    ]
+)
 
-
-# ============================================================
-# KARTU METRIK
-# ============================================================
+top_throughput = (
+    current_summary.loc[
+        current_summary[
+            "throughput_per_hour"
+        ].idxmax()
+    ]
+)
 
 metric_columns = st.columns(4)
 
 with metric_columns[0]:
     metric_card(
         "Skenario terbaik",
-        str(best["Skenario"]),
-        "Berdasarkan skor stabilitas gabungan",
+        str(
+            best_scenario[
+                "scenario"
+            ]
+        ),
+        (
+            "Waktu tunggu "
+            f"{best_scenario['avg_wait_time']:.2f} "
+            "menit"
+        ),
     )
 
 with metric_columns[1]:
     metric_card(
-        "Rata-rata A terbaik",
-        f"{best['Rata-rata A']:.3f}",
-        "Semakin rendah semakin stabil",
+        "Waktu tunggu terendah",
+        (
+            f"{best_scenario['avg_wait_time']:.2f} "
+            "menit"
+        ),
+        "Rata-rata seluruh iterasi",
     )
 
 with metric_columns[2]:
     metric_card(
-        "Peak panik terendah",
-        f"{summary['Peak % Panik'].min():.2f}%",
-        "Persentase maksimum agen panik",
+        "Pembatalan tertinggi",
+        (
+            f"{worst_cancel['abandonment_percent']:.2f}%"
+        ),
+        str(
+            worst_cancel[
+                "scenario"
+            ]
+        ),
     )
 
 with metric_columns[3]:
     metric_card(
-        "Konfigurasi",
-        f"{iterations} iterasi",
-        f"{agents} agen · {steps} tick",
+        "Throughput tertinggi",
+        (
+            f"{top_throughput['throughput_per_hour']:.2f}"
+            "/jam"
+        ),
+        str(
+            top_throughput[
+                "scenario"
+            ]
+        ),
     )
 
 
@@ -1511,984 +1657,1771 @@ with metric_columns[3]:
 (
     overview_tab,
     result_tab,
-    dynamic_tab,
-    detail_tab,
+    simulation_tab,
+    optimization_tab,
     sensitivity_tab,
     export_tab,
 ) = st.tabs(
     [
-        "Overview Akademik",
-        "Ringkasan & Ranking",
-        "Dinamika",
-        "Analisis Skenario",
+        "Ringkasan Project",
+        "Hasil Eksperimen",
+        "Simulasi Interaktif",
+        "Optimasi Kiosk",
         "Sensitivitas",
-        "Export & HKI",
+        "Metodologi & Ekspor",
     ]
 )
 
 
 # ============================================================
-# TAB 1: OVERVIEW
+# TAB 1 - RINGKASAN PROJECT
 # ============================================================
 
 with overview_tab:
-    left_column, right_column = st.columns(
-        [1.15, 1]
+    st.subheader(
+        "Latar Belakang dan Tujuan"
     )
 
-    with left_column:
-        st.subheader(
-            "Tujuan dan Rumus Model"
-        )
+    problem_column, objective_column = (
+        st.columns(2)
+    )
 
-        st.write(
-            "Model mengevaluasi bagaimana kecemasan "
-            "agen berubah akibat stressor dan bagaimana "
-            "CBT reaktif maupun preventif memengaruhi "
-            "stabilitas populasi."
-        )
-
+    with problem_column:
         st.markdown(
             """
-            <div class="formula">
-            A(t+1) = clip[
-                A(t) + S(t)(1+D)
-                + SocialEffect
-                − R(1+0.70P)
-                − CBT(P)
-                + ε,
-                0,
-                1
-            ]
+            <div class="box">
+                <h3>
+                    Masalah yang dimodelkan
+                </h3>
+
+                <p>
+                    Lonjakan pengunjung dapat
+                    membuat kapasitas kiosk tidak
+                    mencukupi. Dampaknya berupa
+                    waktu tunggu tinggi, antrean
+                    panjang, utilisasi mendekati
+                    penuh, dan pelanggan yang
+                    membatalkan transaksi.
+                </p>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        st.dataframe(
-            VARIABLE_TABLE,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    with right_column:
-        st.subheader("State Chart")
-
-        st.graphviz_chart(
+    with objective_column:
+        st.markdown(
             """
-            digraph {
-                rankdir=LR;
+            <div class="box">
+                <h3>
+                    Tujuan simulasi
+                </h3>
 
-                node [
-                    shape=box,
-                    style="rounded,filled",
-                    fillcolor="#F0F7FA",
-                    color="#1F6F8B"
-                ];
-
-                Tenang -> "Cemas Ringan";
-                "Cemas Ringan" -> "Cemas Tinggi";
-                "Cemas Tinggi" -> Panik;
-                Panik -> Pulih;
-                Pulih -> Tenang;
-                "Cemas Tinggi" -> "Cemas Ringan";
-                "Cemas Ringan" -> Tenang;
-            }
+                <p>
+                    Menguji pengaruh laju kedatangan,
+                    jumlah kiosk, waktu pelayanan,
+                    batas kesabaran, serta intervensi
+                    reaktif dan preventif terhadap
+                    kinerja sistem antrean.
+                </p>
+            </div>
             """,
-            use_container_width=True,
-        )
-
-        st.dataframe(
-            STATE_TABLE,
-            use_container_width=True,
-            hide_index=True,
+            unsafe_allow_html=True,
         )
 
     st.subheader(
-        "Checklist Kesesuaian Tugas"
+        "State Chart Pelanggan"
     )
-
-    st.dataframe(
-        CHECKLIST_TABLE,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ============================================================
-# TAB 2: RINGKASAN DAN RANKING
-# ============================================================
-
-with result_tab:
-    ranking_view = ranked.copy()
-
-    ranking_view.insert(
-        0,
-        "Peringkat",
-        np.arange(
-            1,
-            len(ranking_view) + 1,
-        ),
-    )
-
-    st.subheader(
-        "Tabel Hasil dan Ranking Skenario"
-    )
-
-    st.dataframe(
-        ranking_view.round(3),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    chart_column_1, chart_column_2 = st.columns(
-        2
-    )
-
-    with chart_column_1:
-        score_chart = px.bar(
-            ranked,
-            x="Skenario",
-            y="Skor Stabilitas",
-            text="Skor Stabilitas",
-            title="Skor Stabilitas Skenario",
-        )
-
-        score_chart.update_traces(
-            texttemplate="%{text:.1f}",
-            textposition="outside",
-        )
-
-        score_chart.update_layout(
-            xaxis_title="Skenario",
-            yaxis_title="Skor 0–100",
-            height=430,
-        )
-
-        st.plotly_chart(
-            score_chart,
-            use_container_width=True,
-        )
-
-    with chart_column_2:
-        tradeoff_chart = px.scatter(
-            ranked,
-            x="Rata-rata A",
-            y="Peak % Panik",
-            size="Waktu Pulih",
-            text="Skenario",
-            hover_name="Skenario",
-            title="Trade-off Anxiety dan Panik",
-        )
-
-        tradeoff_chart.update_traces(
-            textposition="top center"
-        )
-
-        tradeoff_chart.update_layout(
-            height=430
-        )
-
-        st.plotly_chart(
-            tradeoff_chart,
-            use_container_width=True,
-        )
-
-    st.subheader(
-        "Interpretasi Setiap Skenario"
-    )
-
-    for scenario in ranked["Skenario"]:
-        row = ranked[
-            ranked["Skenario"] == scenario
-        ].iloc[0]
-
-        with st.expander(
-            (
-                f"{scenario} · "
-                f"skor {row['Skor Stabilitas']:.1f}"
-            ),
-            expanded=(
-                scenario
-                == best["Skenario"]
-            ),
-        ):
-            st.write(
-                SCENARIO_INFO[scenario]
-            )
-
-            st.write(
-                f"Rata-rata A "
-                f"**{row['Rata-rata A']:.3f}**, "
-                f"peak panik "
-                f"**{row['Peak % Panik']:.2f}%**, "
-                f"waktu pulih "
-                f"**{row['Waktu Pulih']:.2f} tick**."
-            )
-
-
-# ============================================================
-# TAB 3: DINAMIKA
-# ============================================================
-
-with dynamic_tab:
-    show_band = st.toggle(
-        "Tampilkan pita kuantil 25–75",
-        value=True,
-    )
-
-    anxiety_chart = go.Figure()
-
-    for scenario in selected:
-        scenario_history = history[
-            history["scenario"] == scenario
-        ]
-
-        if show_band:
-            anxiety_chart.add_trace(
-                go.Scatter(
-                    x=scenario_history["time"],
-                    y=scenario_history["q75_A"],
-                    mode="lines",
-                    line={"width": 0},
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
-
-            anxiety_chart.add_trace(
-                go.Scatter(
-                    x=scenario_history["time"],
-                    y=scenario_history["q25_A"],
-                    mode="lines",
-                    line={"width": 0},
-                    fill="tonexty",
-                    name=f"IQR {scenario}",
-                    opacity=0.16,
-                    hoverinfo="skip",
-                )
-            )
-
-        anxiety_chart.add_trace(
-            go.Scatter(
-                x=scenario_history["time"],
-                y=scenario_history["mean_A"],
-                mode="lines",
-                name=scenario,
-            )
-        )
-
-    anxiety_chart.update_layout(
-        title=(
-            "Dinamika Rata-rata "
-            "Anxiety Level"
-        ),
-        xaxis_title="Tick",
-        yaxis_title="Mean A",
-        height=500,
-    )
-
-    st.plotly_chart(
-        anxiety_chart,
-        use_container_width=True,
-    )
-
-    left_chart, right_chart = st.columns(
-        2
-    )
-
-    with left_chart:
-        panic_chart = px.line(
-            history,
-            x="time",
-            y="pct_panik",
-            color="scenario",
-            title="Persentase Agen Panik",
-        )
-
-        panic_chart.update_layout(
-            xaxis_title="Tick",
-            yaxis_title="Agen Panik (%)",
-            height=420,
-        )
-
-        st.plotly_chart(
-            panic_chart,
-            use_container_width=True,
-        )
-
-    with right_chart:
-        component_data = history.melt(
-            id_vars=[
-                "time",
-                "scenario",
-            ],
-            value_vars=[
-                "stressor_S",
-                "mean_P",
-            ],
-            var_name="Komponen",
-            value_name="Nilai",
-        )
-
-        component_chart = px.line(
-            component_data,
-            x="time",
-            y="Nilai",
-            color="scenario",
-            line_dash="Komponen",
-            title=(
-                "Stressor dan "
-                "CBT Rata-rata"
-            ),
-        )
-
-        component_chart.update_layout(
-            xaxis_title="Tick",
-            yaxis_title="Nilai",
-            height=420,
-        )
-
-        st.plotly_chart(
-            component_chart,
-            use_container_width=True,
-        )
-
-    final_state = (
-        history
-        .groupby(
-            "scenario",
-            as_index=False,
-        )
-        .tail(1)
-        [
-            [
-                "scenario",
-                "pct_tenang",
-                "pct_cemas_ringan",
-                "pct_cemas_tinggi",
-                "pct_panik",
-            ]
-        ]
-    )
-
-    final_state_long = final_state.melt(
-        id_vars="scenario",
-        var_name="State",
-        value_name="Persentase",
-    )
-
-    final_state_long["State"] = (
-        final_state_long["State"]
-        .replace(
-            {
-                "pct_tenang":
-                    "Tenang",
-
-                "pct_cemas_ringan":
-                    "Cemas Ringan",
-
-                "pct_cemas_tinggi":
-                    "Cemas Tinggi",
-
-                "pct_panik":
-                    "Panik",
-            }
-        )
-    )
-
-    final_state_chart = px.bar(
-        final_state_long,
-        x="scenario",
-        y="Persentase",
-        color="State",
-        barmode="group",
-        title="Komposisi State Akhir",
-    )
-
-    final_state_chart.update_layout(
-        xaxis_title="Skenario",
-        yaxis_title="Persentase Agen (%)",
-        height=460,
-    )
-
-    st.plotly_chart(
-        final_state_chart,
-        use_container_width=True,
-    )
-
-
-# ============================================================
-# TAB 4: ANALISIS SKENARIO
-# ============================================================
-
-with detail_tab:
-    chosen = st.selectbox(
-        "Pilih skenario",
-        selected,
-    )
-
-    chosen_history = history[
-        history["scenario"] == chosen
-    ]
-
-    chosen_sample = sample[
-        sample["scenario"] == chosen
-    ]
-
-    chosen_row = ranked[
-        ranked["Skenario"] == chosen
-    ].iloc[0]
 
     st.markdown(
-        f"""
-        <div class="info-box">
-            <b>{chosen}</b><br>
-            {SCENARIO_INFO[chosen]}
-            <br><br>
-            Rata-rata A:
-            <b>{chosen_row['Rata-rata A']:.3f}</b><br>
-            Peak panik:
-            <b>{chosen_row['Peak % Panik']:.2f}%</b><br>
-            Waktu pulih:
-            <b>{chosen_row['Waktu Pulih']:.2f} tick</b>
+        """
+        <div class="box">
+            <div class="flow">
+                <span class="node">
+                    Datang
+                </span>
+
+                <span class="arrow">
+                    →
+                </span>
+
+                <span class="node">
+                    Menunggu
+                </span>
+
+                <span class="arrow">
+                    →
+                </span>
+
+                <span class="node">
+                    Dilayani
+                </span>
+
+                <span class="arrow">
+                    →
+                </span>
+
+                <span class="node">
+                    Selesai
+                </span>
+            </div>
+
+            <div class="flow">
+                <span class="node">
+                    Menunggu
+                </span>
+
+                <span class="arrow">
+                    → jika melebihi batas sabar →
+                </span>
+
+                <span class="node">
+                    Batal
+                </span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    scenario_column, grid_column = st.columns(
-        [1.1, 0.9]
+    st.subheader(
+        "Formulasi Indikator"
     )
 
-    with scenario_column:
-        state_history = chosen_history.melt(
-            id_vars=[
-                "time",
-                "scenario",
-            ],
-            value_vars=[
-                "pct_tenang",
-                "pct_cemas_ringan",
-                "pct_cemas_tinggi",
-                "pct_panik",
-            ],
-            var_name="State",
-            value_name="Persentase",
+    formula_column_1, formula_column_2 = (
+        st.columns(2)
+    )
+
+    with formula_column_1:
+        st.markdown(
+            """
+            <div class="formula">
+                Waktu tunggu =
+                mulai dilayani − waktu datang
+                <br>
+
+                Waktu sistem =
+                waktu keluar − waktu datang
+                <br>
+
+                Throughput =
+                pelanggan selesai / durasi (jam)
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        state_history["State"] = (
-            state_history["State"]
-            .replace(
-                {
-                    "pct_tenang":
-                        "Tenang",
+    with formula_column_2:
+        st.markdown(
+            """
+            <div class="formula">
+                Utilisasi =
+                busy time / (kiosk × durasi) × 100%
+                <br>
 
-                    "pct_cemas_ringan":
-                        "Cemas Ringan",
+                Abandonment =
+                pelanggan batal / total pelanggan × 100%
+                <br>
 
-                    "pct_cemas_tinggi":
-                        "Cemas Tinggi",
+                Panjang antrean =
+                agen yang menunggu pada waktu t
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-                    "pct_panik":
-                        "Panik",
-                }
+    scenario_rows = []
+
+    for scenario_name in SCENARIOS:
+        config = CONFIGS[
+            scenario_name
+        ]
+
+        scenario_rows.append(
+            {
+                "Skenario":
+                    scenario_name,
+
+                "Kiosk":
+                    config[
+                        "num_kiosks"
+                    ],
+
+                "Interval kedatangan":
+                    config[
+                        "mean_interarrival_time"
+                    ],
+
+                "Waktu pelayanan":
+                    config[
+                        "mean_service_time"
+                    ],
+
+                "Batas sabar":
+                    config[
+                        "patience_time"
+                    ],
+
+                "Keterangan":
+                    DESCRIPTIONS[
+                        scenario_name
+                    ],
+            }
+        )
+
+    st.subheader(
+        "Skenario What-If"
+    )
+
+    show_table(
+        pd.DataFrame(
+            scenario_rows
+        ),
+        2,
+    )
+
+
+# ============================================================
+# TAB 2 - HASIL EKSPERIMEN
+# ============================================================
+
+with result_tab:
+    st.subheader(
+        "Perbandingan Empat Skenario"
+    )
+
+    st.caption(
+        "Data aktif: "
+        f"{st.session_state['comparison_source']} · "
+        f"{st.session_state['comparison_iterations']} "
+        "iterasi per skenario."
+    )
+
+    with st.form(
+        "comparison_form"
+    ):
+        form_column_1, form_column_2, form_column_3 = (
+            st.columns(3)
+        )
+
+        with form_column_1:
+            comparison_iterations = (
+                st.select_slider(
+                    "Iterasi Monte Carlo",
+                    options=[
+                        30,
+                        50,
+                        100,
+                        200,
+                        500,
+                        1000,
+                    ],
+                    value=100,
+                )
+            )
+
+        with form_column_2:
+            comparison_duration = (
+                st.slider(
+                    "Durasi simulasi (menit)",
+                    min_value=120,
+                    max_value=720,
+                    value=480,
+                    step=60,
+                )
+            )
+
+        with form_column_3:
+            comparison_threshold = (
+                st.slider(
+                    "Ambang antrean reaktif",
+                    min_value=2,
+                    max_value=12,
+                    value=6,
+                    step=1,
+                )
+            )
+
+        run_comparison = (
+            st.form_submit_button(
+                "Jalankan ulang empat skenario",
+                type="primary",
+                use_container_width=True,
             )
         )
 
-        state_area_chart = px.area(
-            state_history,
-            x="time",
-            y="Persentase",
-            color="State",
-            title=(
-                "Perubahan Komposisi State"
-            ),
+    if run_comparison:
+        with st.spinner(
+            "Menjalankan eksperimen "
+            "Monte Carlo..."
+        ):
+            summary_dataframe, raw_dataframe = (
+                run_all_scenarios(
+                    int(
+                        comparison_iterations
+                    ),
+                    int(
+                        comparison_duration
+                    ),
+                    int(
+                        comparison_threshold
+                    ),
+                )
+            )
+
+        st.session_state[
+            "comparison_summary"
+        ] = summary_dataframe
+
+        st.session_state[
+            "comparison_raw"
+        ] = raw_dataframe
+
+        st.session_state[
+            "comparison_iterations"
+        ] = int(
+            comparison_iterations
         )
 
-        state_area_chart.update_layout(
-            xaxis_title="Tick",
-            yaxis_title="Persentase Agen (%)",
-            height=460,
-        )
+        st.session_state[
+            "comparison_source"
+        ] = "Hasil simulasi dashboard"
 
-        st.plotly_chart(
-            state_area_chart,
-            use_container_width=True,
-        )
+        st.rerun()
 
-    with grid_column:
-        grid_frame = (
-            chosen_sample
-            .groupby(
-                ["y", "x"],
-                as_index=False,
-            )["A"]
-            .mean()
-        )
-
-        grid = np.full(
-            (grid_size, grid_size),
-            np.nan,
-        )
-
-        for _, row in grid_frame.iterrows():
-            grid[
-                int(row["y"]),
-                int(row["x"]),
-            ] = row["A"]
-
-        grid_chart = px.imshow(
-            grid,
-            origin="lower",
-            aspect="auto",
-            color_continuous_scale=(
-                "RdYlBu_r"
-            ),
-            title="Snapshot Grid Agen",
-        )
-
-        grid_chart.update_layout(
-            height=460,
-            xaxis_title="Posisi X",
-            yaxis_title="Posisi Y",
-            coloraxis_colorbar_title="A",
-        )
-
-        st.plotly_chart(
-            grid_chart,
-            use_container_width=True,
-        )
-
-    histogram_column_1, histogram_column_2, histogram_column_3 = (
-        st.columns(3)
+    summary_dataframe = ordered(
+        st.session_state[
+            "comparison_summary"
+        ]
     )
 
-    with histogram_column_1:
-        anxiety_histogram = px.histogram(
-            chosen_sample,
-            x="A",
-            color="state",
-            nbins=24,
-            title="Distribusi Anxiety Level",
-        )
+    shown_columns = [
+        "scenario",
+        "avg_wait_time",
+        "avg_queue_length",
+        "max_queue_length",
+        "utilization_percent",
+        "throughput_per_hour",
+        "abandonment_percent",
+        "served_customers",
+        "abandoned_customers",
+    ]
 
-        anxiety_histogram.update_layout(
-            height=350,
-            xaxis_title="A",
-        )
+    show_table(
+        summary_dataframe[
+            shown_columns
+        ],
+        3,
+    )
 
-        st.plotly_chart(
-            anxiety_histogram,
-            use_container_width=True,
-        )
+    metric_options = {
+        "avg_wait_time":
+            "Waktu tunggu rata-rata (menit)",
 
-    with histogram_column_2:
-        resilience_histogram = px.histogram(
-            chosen_sample,
-            x="R",
-            nbins=20,
-            title="Distribusi Resilience",
-        )
+        "avg_queue_length":
+            "Panjang antrean rata-rata",
 
-        resilience_histogram.update_layout(
-            height=350,
-            xaxis_title="R",
-        )
+        "utilization_percent":
+            "Utilisasi kiosk (%)",
 
-        st.plotly_chart(
-            resilience_histogram,
-            use_container_width=True,
-        )
+        "throughput_per_hour":
+            "Throughput (pelanggan/jam)",
 
-    with histogram_column_3:
-        distortion_histogram = px.histogram(
-            chosen_sample,
-            x="D",
-            nbins=20,
+        "abandonment_percent":
+            "Pelanggan batal (%)",
+    }
+
+    selected_metric = st.selectbox(
+        "Indikator grafik",
+        options=list(
+            metric_options
+        ),
+        format_func=lambda value: (
+            metric_options[value]
+        ),
+    )
+
+    comparison_chart = px.bar(
+        summary_dataframe,
+        x="scenario",
+        y=selected_metric,
+        color="scenario",
+        color_discrete_map=COLORS,
+        text=selected_metric,
+        title=(
+            metric_options[
+                selected_metric
+            ]
+        ),
+    )
+
+    comparison_chart.update_traces(
+        texttemplate="%{text:.2f}",
+        textposition="outside",
+    )
+
+    comparison_chart.update_layout(
+        xaxis_title="Skenario",
+        yaxis_title=(
+            metric_options[
+                selected_metric
+            ]
+        ),
+        showlegend=False,
+        height=460,
+        margin=dict(
+            t=70,
+            b=70,
+        ),
+    )
+
+    st.plotly_chart(
+        comparison_chart,
+        use_container_width=True,
+    )
+
+    raw_comparison = (
+        st.session_state[
+            "comparison_raw"
+        ]
+    )
+
+    if raw_comparison is not None:
+        box_chart = px.box(
+            raw_comparison,
+            x="scenario",
+            y="avg_wait_time",
+            color="scenario",
+            color_discrete_map=COLORS,
+            points=False,
             title=(
-                "Distribusi Cognitive Distortion"
+                "Sebaran Waktu Tunggu "
+                "Monte Carlo"
             ),
         )
 
-        distortion_histogram.update_layout(
-            height=350,
-            xaxis_title="D",
+        box_chart.update_layout(
+            xaxis_title="Skenario",
+            yaxis_title=(
+                "Waktu tunggu (menit)"
+            ),
+            showlegend=False,
+            height=420,
         )
 
         st.plotly_chart(
-            distortion_histogram,
+            box_chart,
+            use_container_width=True,
+        )
+
+    automatic_narrative = narrative(
+        summary_dataframe,
+        st.session_state[
+            "comparison_iterations"
+        ],
+    )
+
+    st.markdown(
+        (
+            '<div class="insight">'
+            '<b>Interpretasi:</b> '
+            f'{automatic_narrative}'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# TAB 3 - SIMULASI INTERAKTIF
+# ============================================================
+
+with simulation_tab:
+    st.subheader(
+        "Eksperimen Satu Skenario"
+    )
+
+    with st.form(
+        "single_form"
+    ):
+        row_1_column_1, row_1_column_2, row_1_column_3 = (
+            st.columns(3)
+        )
+
+        with row_1_column_1:
+            selected_scenario = (
+                st.selectbox(
+                    "Skenario",
+                    SCENARIOS,
+                )
+            )
+
+        selected_config = (
+            CONFIGS[
+                selected_scenario
+            ]
+        )
+
+        with row_1_column_2:
+            single_iterations = (
+                st.select_slider(
+                    "Iterasi Monte Carlo",
+                    options=[
+                        10,
+                        30,
+                        50,
+                        100,
+                        200,
+                        500,
+                    ],
+                    value=50,
+                )
+            )
+
+        with row_1_column_3:
+            single_seed = (
+                st.number_input(
+                    "Seed",
+                    min_value=1,
+                    max_value=999999,
+                    value=123,
+                )
+            )
+
+        row_2_column_1, row_2_column_2, row_2_column_3 = (
+            st.columns(3)
+        )
+
+        with row_2_column_1:
+            single_duration = (
+                st.slider(
+                    "Durasi (menit)",
+                    min_value=60,
+                    max_value=720,
+                    value=480,
+                    step=30,
+                )
+            )
+
+        with row_2_column_2:
+            single_kiosks = (
+                st.slider(
+                    "Jumlah kiosk",
+                    min_value=1,
+                    max_value=8,
+                    value=int(
+                        selected_config[
+                            "num_kiosks"
+                        ]
+                    ),
+                    step=1,
+                )
+            )
+
+        with row_2_column_3:
+            single_patience = (
+                st.slider(
+                    "Batas kesabaran",
+                    min_value=3.0,
+                    max_value=30.0,
+                    value=float(
+                        selected_config[
+                            "patience_time"
+                        ]
+                    ),
+                    step=1.0,
+                )
+            )
+
+        row_3_column_1, row_3_column_2, row_3_column_3 = (
+            st.columns(3)
+        )
+
+        with row_3_column_1:
+            single_interarrival = (
+                st.slider(
+                    "Interval kedatangan",
+                    min_value=1.0,
+                    max_value=8.0,
+                    value=float(
+                        selected_config[
+                            "mean_interarrival_time"
+                        ]
+                    ),
+                    step=0.25,
+                )
+            )
+
+        with row_3_column_2:
+            single_service = (
+                st.slider(
+                    "Waktu pelayanan",
+                    min_value=1.0,
+                    max_value=10.0,
+                    value=float(
+                        selected_config[
+                            "mean_service_time"
+                        ]
+                    ),
+                    step=0.25,
+                )
+            )
+
+        with row_3_column_3:
+            single_threshold = (
+                st.slider(
+                    "Ambang reaktif",
+                    min_value=2,
+                    max_value=12,
+                    value=6,
+                    step=1,
+                )
+            )
+
+        run_single = (
+            st.form_submit_button(
+                "Jalankan simulasi interaktif",
+                type="primary",
+                use_container_width=True,
+            )
+        )
+
+    if run_single:
+        with st.spinner(
+            "Menghitung simulasi..."
+        ):
+            one_summary, customers_dataframe, queue_dataframe = (
+                simulate_kiosk(
+                    seed=int(
+                        single_seed
+                    ),
+
+                    duration=int(
+                        single_duration
+                    ),
+
+                    num_kiosks=int(
+                        single_kiosks
+                    ),
+
+                    mean_interarrival_time=float(
+                        single_interarrival
+                    ),
+
+                    mean_service_time=float(
+                        single_service
+                    ),
+
+                    patience_time=float(
+                        single_patience
+                    ),
+
+                    scenario_name=
+                        selected_scenario,
+
+                    scenario_type=str(
+                        selected_config[
+                            "scenario_type"
+                        ]
+                    ),
+
+                    reactive_threshold=int(
+                        single_threshold
+                    ),
+                )
+            )
+
+            single_monte_carlo = (
+                run_monte_carlo(
+                    n_iterations=int(
+                        single_iterations
+                    ),
+
+                    duration=int(
+                        single_duration
+                    ),
+
+                    num_kiosks=int(
+                        single_kiosks
+                    ),
+
+                    mean_interarrival_time=float(
+                        single_interarrival
+                    ),
+
+                    mean_service_time=float(
+                        single_service
+                    ),
+
+                    patience_time=float(
+                        single_patience
+                    ),
+
+                    scenario_name=
+                        selected_scenario,
+
+                    scenario_type=str(
+                        selected_config[
+                            "scenario_type"
+                        ]
+                    ),
+
+                    start_seed=9000,
+
+                    reactive_threshold=int(
+                        single_threshold
+                    ),
+                )
+            )
+
+        st.session_state[
+            "single_result"
+        ] = (
+            one_summary,
+            customers_dataframe,
+            queue_dataframe,
+            single_monte_carlo,
+        )
+
+    if (
+        st.session_state[
+            "single_result"
+        ]
+        is None
+    ):
+        st.info(
+            "Atur parameter, lalu "
+            "jalankan simulasi."
+        )
+
+    else:
+        (
+            one_summary,
+            customers_dataframe,
+            queue_dataframe,
+            single_monte_carlo,
+        ) = st.session_state[
+            "single_result"
+        ]
+
+        mean_result = (
+            single_monte_carlo
+            .mean(
+                numeric_only=True
+            )
+        )
+
+        result_cards = (
+            st.columns(5)
+        )
+
+        card_values = [
+            (
+                "Waktu tunggu",
+                (
+                    f"{mean_result['avg_wait_time']:.2f} "
+                    "menit"
+                ),
+                "Rata-rata Monte Carlo",
+            ),
+            (
+                "Antrean",
+                (
+                    f"{mean_result['avg_queue_length']:.2f}"
+                ),
+                (
+                    "Maksimum "
+                    f"{mean_result['max_queue_length']:.2f}"
+                ),
+            ),
+            (
+                "Utilisasi",
+                (
+                    f"{mean_result['utilization_percent']:.2f}%"
+                ),
+                "Kapasitas terpakai",
+            ),
+            (
+                "Throughput",
+                (
+                    f"{mean_result['throughput_per_hour']:.2f}"
+                    "/jam"
+                ),
+                "Pelanggan selesai",
+            ),
+            (
+                "Pelanggan batal",
+                (
+                    f"{mean_result['abandonment_percent']:.2f}%"
+                ),
+                "Melewati batas sabar",
+            ),
+        ]
+
+        for column, card_value in zip(
+            result_cards,
+            card_values,
+        ):
+            with column:
+                metric_card(
+                    *card_value
+                )
+
+        chart_column_1, chart_column_2 = (
+            st.columns(2)
+        )
+
+        with chart_column_1:
+            queue_chart = go.Figure()
+
+            queue_chart.add_trace(
+                go.Scatter(
+                    x=queue_dataframe[
+                        "time"
+                    ],
+
+                    y=queue_dataframe[
+                        "queue_length"
+                    ],
+
+                    mode="lines",
+
+                    name="Menunggu",
+
+                    line=dict(
+                        color="#2563EB",
+                        width=2,
+                    ),
+
+                    fill="tozeroy",
+
+                    fillcolor=(
+                        "rgba(37,99,235,0.12)"
+                    ),
+                )
+            )
+
+            queue_chart.add_trace(
+                go.Scatter(
+                    x=queue_dataframe[
+                        "time"
+                    ],
+
+                    y=queue_dataframe[
+                        "in_service"
+                    ],
+
+                    mode="lines",
+
+                    name="Dilayani",
+
+                    line=dict(
+                        color="#D6A84B",
+                        width=2,
+                    ),
+                )
+            )
+
+            queue_chart.update_layout(
+                title="Dinamika Antrean",
+
+                xaxis_title=
+                    "Waktu (menit)",
+
+                yaxis_title=
+                    "Jumlah pelanggan",
+
+                height=420,
+            )
+
+            st.plotly_chart(
+                queue_chart,
+                use_container_width=True,
+            )
+
+        with chart_column_2:
+            histogram = px.histogram(
+                customers_dataframe,
+
+                x="wait_time",
+
+                color="state",
+
+                nbins=24,
+
+                color_discrete_map={
+                    "selesai":
+                        "#0F766E",
+
+                    "batal":
+                        "#B42318",
+                },
+
+                title=(
+                    "Distribusi Waktu Tunggu"
+                ),
+            )
+
+            histogram.update_layout(
+                xaxis_title=(
+                    "Waktu tunggu (menit)"
+                ),
+
+                yaxis_title=(
+                    "Jumlah pelanggan"
+                ),
+
+                height=420,
+            )
+
+            st.plotly_chart(
+                histogram,
+                use_container_width=True,
+            )
+
+        monte_carlo_box = px.box(
+            single_monte_carlo,
+
+            x="scenario",
+
+            y="avg_wait_time",
+
+            points="outliers",
+
+            title=(
+                "Sebaran Waktu Tunggu "
+                "Monte Carlo"
+            ),
+        )
+
+        monte_carlo_box.update_layout(
+            xaxis_title="",
+
+            yaxis_title=(
+                "Waktu tunggu (menit)"
+            ),
+
+            height=380,
+        )
+
+        st.plotly_chart(
+            monte_carlo_box,
+            use_container_width=True,
+        )
+
+        st.subheader(
+            "Data Pelanggan"
+        )
+
+        show_table(
+            customers_dataframe.head(
+                100
+            ),
+            3,
+        )
+
+        if (
+            mean_result[
+                "abandonment_percent"
+            ] > 10
+            or mean_result[
+                "avg_wait_time"
+            ] > 8
+        ):
+            recommendation = (
+                "Sistem belum optimal. "
+                "Tambahkan kiosk, percepat "
+                "pelayanan, atau gunakan "
+                "strategi preventif."
+            )
+
+            css_class = "warning"
+
+        elif (
+            mean_result[
+                "utilization_percent"
+            ] > 90
+        ):
+            recommendation = (
+                "Kiosk mendekati kapasitas "
+                "penuh dan rentan mengalami "
+                "antrean ketika terjadi "
+                "lonjakan kedatangan."
+            )
+
+            css_class = "warning"
+
+        else:
+            recommendation = (
+                "Kinerja sistem relatif "
+                "terkendali pada konfigurasi ini."
+            )
+
+            css_class = "insight"
+
+        st.markdown(
+            (
+                f'<div class="{css_class}">'
+                '<b>Rekomendasi:</b> '
+                f'{recommendation}'
+                '</div>'
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+# ============================================================
+# TAB 4 - OPTIMASI KIOSK
+# ============================================================
+
+with optimization_tab:
+    st.subheader(
+        "Optimasi Jumlah Kiosk"
+    )
+
+    with st.form(
+        "optimization_form"
+    ):
+        opt_column_1, opt_column_2, opt_column_3 = (
+            st.columns(3)
+        )
+
+        with opt_column_1:
+            maximum_kiosk = (
+                st.slider(
+                    "Kiosk maksimum",
+                    min_value=3,
+                    max_value=8,
+                    value=6,
+                    step=1,
+                )
+            )
+
+        with opt_column_2:
+            optimization_iterations = (
+                st.select_slider(
+                    "Iterasi per konfigurasi",
+                    options=[
+                        20,
+                        30,
+                        50,
+                        100,
+                        200,
+                    ],
+                    value=50,
+                )
+            )
+
+        with opt_column_3:
+            optimization_duration = (
+                st.slider(
+                    "Durasi (menit)",
+                    min_value=120,
+                    max_value=720,
+                    value=480,
+                    step=60,
+                )
+            )
+
+        opt_column_4, opt_column_5, opt_column_6 = (
+            st.columns(3)
+        )
+
+        with opt_column_4:
+            optimization_interarrival = (
+                st.slider(
+                    "Interval kedatangan",
+                    min_value=1.0,
+                    max_value=8.0,
+                    value=3.0,
+                    step=0.25,
+                    key="opt_iat",
+                )
+            )
+
+        with opt_column_5:
+            optimization_service = (
+                st.slider(
+                    "Waktu pelayanan",
+                    min_value=1.0,
+                    max_value=10.0,
+                    value=4.0,
+                    step=0.25,
+                    key="opt_service",
+                )
+            )
+
+        with opt_column_6:
+            optimization_patience = (
+                st.slider(
+                    "Batas sabar",
+                    min_value=3.0,
+                    max_value=30.0,
+                    value=12.0,
+                    step=1.0,
+                    key="opt_patience",
+                )
+            )
+
+        run_optimization = (
+            st.form_submit_button(
+                "Jalankan optimasi",
+                type="primary",
+                use_container_width=True,
+            )
+        )
+
+    if run_optimization:
+        with st.spinner(
+            "Menguji jumlah kiosk..."
+        ):
+            optimization_summary, optimization_raw = (
+                optimize_kiosks(
+                    int(
+                        maximum_kiosk
+                    ),
+
+                    int(
+                        optimization_iterations
+                    ),
+
+                    int(
+                        optimization_duration
+                    ),
+
+                    float(
+                        optimization_interarrival
+                    ),
+
+                    float(
+                        optimization_service
+                    ),
+
+                    float(
+                        optimization_patience
+                    ),
+                )
+            )
+
+        st.session_state[
+            "optimization"
+        ] = optimization_summary
+
+        st.session_state[
+            "optimization_raw"
+        ] = optimization_raw
+
+    if (
+        st.session_state[
+            "optimization"
+        ]
+        is None
+    ):
+        st.info(
+            "Jalankan optimasi untuk "
+            "membandingkan beberapa jumlah kiosk."
+        )
+
+    else:
+        optimization_summary = (
+            st.session_state[
+                "optimization"
+            ]
+        )
+
+        show_table(
+            optimization_summary,
+            3,
+        )
+
+        feasible_result = (
+            optimization_summary[
+                (
+                    optimization_summary[
+                        "avg_wait_time"
+                    ] <= 1.0
+                )
+                & (
+                    optimization_summary[
+                        "abandonment_percent"
+                    ] <= 1.0
+                )
+                & (
+                    optimization_summary[
+                        "utilization_percent"
+                    ] <= 85.0
+                )
+            ]
+        )
+
+        if not feasible_result.empty:
+            recommended_kiosk = int(
+                feasible_result.iloc[0][
+                    "num_kiosks"
+                ]
+            )
+
+            st.markdown(
+                (
+                    '<div class="insight">'
+                    '<b>Rekomendasi:</b> '
+                    f'{recommended_kiosk} kiosk '
+                    'merupakan kapasitas minimum '
+                    'yang memenuhi waktu tunggu '
+                    '≤ 1 menit, pembatalan ≤ 1%, '
+                    'dan utilisasi ≤ 85%.'
+                    '</div>'
+                ),
+                unsafe_allow_html=True,
+            )
+
+        else:
+            st.markdown(
+                """
+                <div class="warning">
+                    Belum ada konfigurasi yang
+                    memenuhi seluruh sasaran.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        optimization_chart_column_1, optimization_chart_column_2 = (
+            st.columns(2)
+        )
+
+        with optimization_chart_column_1:
+            waiting_chart = px.line(
+                optimization_summary,
+
+                x="num_kiosks",
+
+                y="avg_wait_time",
+
+                markers=True,
+
+                title=(
+                    "Jumlah Kiosk vs "
+                    "Waktu Tunggu"
+                ),
+            )
+
+            waiting_chart.update_layout(
+                xaxis_title=(
+                    "Jumlah kiosk"
+                ),
+
+                yaxis_title=(
+                    "Waktu tunggu (menit)"
+                ),
+
+                height=410,
+            )
+
+            st.plotly_chart(
+                waiting_chart,
+                use_container_width=True,
+            )
+
+        with optimization_chart_column_2:
+            cancellation_chart = px.line(
+                optimization_summary,
+
+                x="num_kiosks",
+
+                y="abandonment_percent",
+
+                markers=True,
+
+                title=(
+                    "Jumlah Kiosk vs "
+                    "Pembatalan"
+                ),
+            )
+
+            cancellation_chart.update_layout(
+                xaxis_title=(
+                    "Jumlah kiosk"
+                ),
+
+                yaxis_title=(
+                    "Pelanggan batal (%)"
+                ),
+
+                height=410,
+            )
+
+            st.plotly_chart(
+                cancellation_chart,
+                use_container_width=True,
+            )
+
+        utilization_chart = px.bar(
+            optimization_summary,
+
+            x="num_kiosks",
+
+            y="utilization_percent",
+
+            text="utilization_percent",
+
+            title=(
+                "Utilisasi berdasarkan "
+                "Jumlah Kiosk"
+            ),
+        )
+
+        utilization_chart.add_hline(
+            y=85,
+
+            line_dash="dash",
+
+            annotation_text=(
+                "Sasaran 85%"
+            ),
+        )
+
+        utilization_chart.update_traces(
+            texttemplate=(
+                "%{text:.1f}%"
+            )
+        )
+
+        utilization_chart.update_layout(
+            xaxis_title=(
+                "Jumlah kiosk"
+            ),
+
+            yaxis_title=(
+                "Utilisasi (%)"
+            ),
+
+            height=420,
+        )
+
+        st.plotly_chart(
+            utilization_chart,
             use_container_width=True,
         )
 
 
 # ============================================================
-# TAB 5: SENSITIVITAS
+# TAB 5 - ANALISIS SENSITIVITAS
 # ============================================================
 
 with sensitivity_tab:
     st.subheader(
-        "Analisis Sensitivitas Parameter"
+        "Analisis Sensitivitas"
     )
 
-    st.write(
-        "Analisis sensitivitas menguji perubahan hasil "
-        "ketika satu parameter diubah, sedangkan parameter "
-        "lain dipertahankan."
-    )
-
-    sensitivity_column_1, sensitivity_column_2, sensitivity_column_3 = (
-        st.columns(3)
-    )
-
-    with sensitivity_column_1:
-        parameter = st.selectbox(
-            "Parameter",
-            [
-                "Kekuatan CBT",
-                "Peluang Stressor",
-                "Distorsi Kognitif",
-                "Resilience",
-            ],
+    with st.form(
+        "sensitivity_form"
+    ):
+        sens_column_1, sens_column_2, sens_column_3 = (
+            st.columns(3)
         )
 
-    with sensitivity_column_2:
-        sensitivity_iterations = st.slider(
-            "Iterasi sensitivitas",
-            min_value=40,
-            max_value=250,
-            value=80,
-            step=20,
-        )
-
-    with sensitivity_column_3:
-        run_button = st.button(
-            "Jalankan sensitivitas",
-            type="primary",
-            use_container_width=True,
-        )
-
-    value_map = {
-        "Kekuatan CBT":
-            tuple(
-                np.round(
-                    np.linspace(
-                        0.0,
-                        0.12,
-                        7,
-                    ),
-                    3,
+        with sens_column_1:
+            sensitivity_parameter = (
+                st.selectbox(
+                    "Parameter",
+                    [
+                        "Interval kedatangan",
+                        "Waktu pelayanan",
+                        "Batas kesabaran",
+                    ],
                 )
-            ),
+            )
 
-        "Peluang Stressor":
+        with sens_column_2:
+            sensitivity_iterations = (
+                st.select_slider(
+                    "Iterasi per nilai",
+                    options=[
+                        20,
+                        30,
+                        50,
+                        100,
+                        200,
+                    ],
+                    value=50,
+                )
+            )
+
+        with sens_column_3:
+            sensitivity_kiosk = (
+                st.slider(
+                    "Jumlah kiosk",
+                    min_value=1,
+                    max_value=6,
+                    value=2,
+                    step=1,
+                )
+            )
+
+        run_sensitivity = (
+            st.form_submit_button(
+                "Jalankan sensitivitas",
+                type="primary",
+                use_container_width=True,
+            )
+        )
+
+    sensitivity_values = {
+        "Interval kedatangan":
             tuple(
                 np.round(
                     np.linspace(
-                        0.10,
-                        0.70,
-                        7,
+                        1.5,
+                        5.0,
+                        8,
                     ),
                     2,
                 )
             ),
 
-        "Distorsi Kognitif":
+        "Waktu pelayanan":
             tuple(
                 np.round(
                     np.linspace(
-                        0.15,
-                        1.10,
-                        7,
+                        2.0,
+                        7.0,
+                        8,
                     ),
                     2,
                 )
             ),
 
-        "Resilience":
+        "Batas kesabaran":
             tuple(
                 np.round(
                     np.linspace(
-                        0.01,
-                        0.07,
-                        7,
+                        5.0,
+                        20.0,
+                        8,
                     ),
-                    3,
+                    2,
                 )
             ),
     }
 
-    if run_button:
+    if run_sensitivity:
         with st.spinner(
             "Menghitung sensitivitas..."
         ):
-            sensitivity = run_sensitivity(
-                tuple(selected),
-                parameter,
-                value_map[parameter],
-                params,
-                sensitivity_iterations,
-            )
+            st.session_state[
+                "sensitivity"
+            ] = sensitivity_analysis(
+                sensitivity_parameter,
 
-        st.dataframe(
-            sensitivity.round(3),
-            use_container_width=True,
-            hide_index=True,
-        )
+                sensitivity_values[
+                    sensitivity_parameter
+                ],
 
-        sensitivity_chart_1, sensitivity_chart_2 = (
-            st.columns(2)
-        )
+                int(
+                    sensitivity_iterations
+                ),
 
-        with sensitivity_chart_1:
-            mean_sensitivity_chart = px.line(
-                sensitivity,
-                x="Nilai",
-                y="Rata-rata A",
-                color="Skenario",
-                markers=True,
-                title=(
-                    "Sensitivitas terhadap "
-                    "Rata-rata A"
+                int(
+                    sensitivity_kiosk
                 ),
             )
 
-            mean_sensitivity_chart.update_layout(
-                height=420
-            )
-
-            st.plotly_chart(
-                mean_sensitivity_chart,
-                use_container_width=True,
-            )
-
-        with sensitivity_chart_2:
-            panic_sensitivity_chart = px.line(
-                sensitivity,
-                x="Nilai",
-                y="Peak % Panik",
-                color="Skenario",
-                markers=True,
-                title=(
-                    "Sensitivitas terhadap "
-                    "Peak Panik"
-                ),
-            )
-
-            panic_sensitivity_chart.update_layout(
-                height=420
-            )
-
-            st.plotly_chart(
-                panic_sensitivity_chart,
-                use_container_width=True,
-            )
-
-        st.download_button(
-            label=(
-                "Download sensitivitas CSV"
-            ),
-            data=(
-                sensitivity
-                .to_csv(index=False)
-                .encode("utf-8")
-            ),
-            file_name=(
-                "hasil_sensitivitas.csv"
-            ),
-            mime="text/csv",
+    if (
+        st.session_state[
+            "sensitivity"
+        ]
+        is None
+    ):
+        st.info(
+            "Jalankan analisis untuk melihat "
+            "pengaruh perubahan parameter."
         )
 
     else:
-        st.info(
-            "Klik tombol Jalankan sensitivitas "
-            "untuk menghitung pengaruh parameter."
+        sensitivity_dataframe = (
+            st.session_state[
+                "sensitivity"
+            ]
+        )
+
+        show_table(
+            sensitivity_dataframe,
+            3,
+        )
+
+        sensitivity_metrics = {
+            "avg_wait_time":
+                "Waktu tunggu (menit)",
+
+            "avg_queue_length":
+                "Panjang antrean",
+
+            "utilization_percent":
+                "Utilisasi (%)",
+
+            "throughput_per_hour":
+                "Throughput/jam",
+
+            "abandonment_percent":
+                "Pelanggan batal (%)",
+        }
+
+        sensitivity_metric = (
+            st.selectbox(
+                "Indikator",
+                options=list(
+                    sensitivity_metrics
+                ),
+                format_func=lambda value: (
+                    sensitivity_metrics[
+                        value
+                    ]
+                ),
+                key="sens_metric",
+            )
+        )
+
+        sensitivity_chart = px.line(
+            sensitivity_dataframe,
+
+            x="value",
+
+            y=sensitivity_metric,
+
+            markers=True,
+
+            title=(
+                "Pengaruh "
+                f"{sensitivity_dataframe.iloc[0]['parameter']} "
+                "terhadap "
+                f"{sensitivity_metrics[sensitivity_metric]}"
+            ),
+        )
+
+        sensitivity_chart.update_layout(
+            xaxis_title=(
+                sensitivity_dataframe.iloc[0][
+                    "parameter"
+                ]
+            ),
+
+            yaxis_title=(
+                sensitivity_metrics[
+                    sensitivity_metric
+                ]
+            ),
+
+            height=450,
+        )
+
+        st.plotly_chart(
+            sensitivity_chart,
+            use_container_width=True,
         )
 
 
 # ============================================================
-# TAB 6: EXPORT DAN HKI
+# TAB 6 - METODOLOGI DAN EKSPOR
 # ============================================================
 
 with export_tab:
     st.subheader(
-        "Export Data Simulasi"
+        "Metodologi"
     )
 
-    export_column_1, export_column_2, export_column_3 = (
-        st.columns(3)
+    methodology = pd.DataFrame(
+        [
+            [
+                "Pendekatan",
+                (
+                    "Agent-Based Modeling dan "
+                    "Discrete Event Simulation"
+                ),
+            ],
+            [
+                "Agen",
+                "Pelanggan bioskop",
+            ],
+            [
+                "Resource",
+                "Self-service kiosk",
+            ],
+            [
+                "Kedatangan",
+                "Distribusi eksponensial",
+            ],
+            [
+                "Pelayanan",
+                "Distribusi lognormal",
+            ],
+            [
+                "Disiplin antrean",
+                "First come, first served",
+            ],
+            [
+                "Ketidakpastian",
+                (
+                    "Monte Carlo dengan "
+                    "seed berbeda"
+                ),
+            ],
+        ],
+        columns=[
+            "Komponen",
+            "Implementasi",
+        ],
     )
 
-    with export_column_1:
-        st.download_button(
-            label="Download ringkasan CSV",
-            data=(
-                ranked
-                .to_csv(index=False)
-                .encode("utf-8")
-            ),
-            file_name=(
-                "ringkasan_abm_cbt.csv"
-            ),
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with export_column_2:
-        st.download_button(
-            label="Download history CSV",
-            data=(
-                history
-                .to_csv(index=False)
-                .encode("utf-8")
-            ),
-            file_name=(
-                "history_abm_cbt.csv"
-            ),
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with export_column_3:
-        st.download_button(
-            label="Download snapshot CSV",
-            data=(
-                sample
-                .to_csv(index=False)
-                .encode("utf-8")
-            ),
-            file_name=(
-                "snapshot_agen.csv"
-            ),
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    baseline = ranked[
-        ranked["Skenario"]
-        == "Tanpa Intervensi"
-    ]
-
-    difference = (
-        float(
-            baseline.iloc[0]["Rata-rata A"]
-            - best["Rata-rata A"]
-        )
-        if len(baseline)
-        else np.nan
-    )
-
-    conclusion = (
-        f"Simulasi menggunakan {iterations} iterasi "
-        f"Monte Carlo, {agents} agen, dan {steps} tick. "
-        f"Skenario paling stabil adalah "
-        f"{best['Skenario']} dengan rata-rata A "
-        f"{best['Rata-rata A']:.3f}, peak panik "
-        f"{best['Peak % Panik']:.2f}%, dan waktu "
-        f"pulih {best['Waktu Pulih']:.2f} tick."
-    )
-
-    if not np.isnan(difference):
-        conclusion += (
-            " Dibandingkan skenario tanpa intervensi, "
-            f"penurunan rata-rata A mencapai "
-            f"{difference:.3f}."
-        )
-
-    scheduled_description = (
-        ", ".join(
-            map(str, scheduled_ticks)
-        )
-        if scheduled_ticks
-        else "tidak ada"
-    )
-
-    methodology = (
-        "Model menggunakan Agent-Based Modeling "
-        "dengan variabel Anxiety Level (A), "
-        "Stressor (S), Cognitive Distortion (D), "
-        "Resilience (R), dan CBT Protocol (P). "
-        f"Stressor acak memiliki peluang "
-        f"{stress_prob:.2f} per tick, sedangkan "
-        f"stressor terjadwal diberikan pada tick "
-        f"{scheduled_description}. "
-        "Transisi kecemasan menggabungkan stressor, "
-        "distorsi kognitif, pengaruh sosial, "
-        "resilience, CBT, dan noise acak."
-    )
-
-    hki = (
-        "Luaran HKI yang diusulkan adalah Hak Cipta "
-        "Program Komputer untuk aplikasi simulasi "
-        "dinamika kecemasan berbasis Agent-Based "
-        "Modeling. Unsur yang diwujudkan mencakup "
-        "kode sumber, struktur modul simulasi, "
-        "dashboard Streamlit, state chart, logika "
-        "skenario, visualisasi, analisis sensitivitas, "
-        "ekspor data, dan dokumentasi penggunaan. "
-        "Model bersifat edukatif dan tidak diklaim "
-        "sebagai alat diagnosis klinis."
+    show_table(
+        methodology,
+        2,
     )
 
     st.subheader(
-        "Narasi Otomatis"
+        "Asumsi dan Batasan"
+    )
+
+    st.markdown(
+        """
+        1. Setiap pelanggan hanya membutuhkan satu kiosk.
+        2. Setiap kiosk hanya melayani satu pelanggan pada satu waktu.
+        3. Pelanggan mengikuti antrean *first come, first served*.
+        4. Pelanggan meninggalkan antrean setelah batas kesabaran terlewati.
+        5. Model belum memasukkan kerusakan kiosk dan variasi jenis transaksi.
+        6. Hasil simulasi perlu dikalibrasi dengan data nyata sebelum digunakan untuk keputusan operasional.
+        """
+    )
+
+    export_summary = (
+        st.session_state[
+            "comparison_summary"
+        ]
+    )
+
+    export_raw = (
+        st.session_state[
+            "comparison_raw"
+        ]
+    )
+
+    result_narrative = narrative(
+        export_summary,
+        st.session_state[
+            "comparison_iterations"
+        ],
+    )
+
+    st.subheader(
+        "Narasi Hasil"
     )
 
     st.text_area(
-        "Kesimpulan",
-        conclusion,
-        height=140,
+        "Narasi siap laporan",
+        result_narrative,
+        height=170,
     )
 
-    st.text_area(
-        "Metodologi",
-        methodology,
-        height=140,
+    download_column_1, download_column_2, download_column_3 = (
+        st.columns(3)
     )
 
-    st.text_area(
-        "Uraian HKI",
-        hki,
-        height=140,
-    )
+    with download_column_1:
+        st.download_button(
+            label=(
+                "Download ringkasan CSV"
+            ),
 
-    report = f"""# Ringkasan Dashboard ABM CBT
+            data=(
+                export_summary
+                .to_csv(
+                    index=False
+                )
+                .encode(
+                    "utf-8"
+                )
+            ),
 
-Tanggal ekspor: {datetime.now():%Y-%m-%d %H:%M:%S}
+            file_name=(
+                "ringkasan_skenario_"
+                "kiosk_bioskop.csv"
+            ),
 
-## Parameter Simulasi
+            mime="text/csv",
 
-- Iterasi Monte Carlo: {iterations}
-- Jumlah agen: {agents}
-- Jumlah tick: {steps}
-- Peluang stressor: {stress_prob:.2f}
-- Mean Resilience: {mean_r:.3f}
-- Mean Cognitive Distortion: {mean_d:.2f}
-- Kekuatan CBT: {cbt_strength:.3f}
+            use_container_width=True,
+        )
 
-## Kesimpulan
+    with download_column_2:
+        if export_raw is None:
+            raw_data = b""
+            raw_disabled = True
 
-{conclusion}
+        else:
+            raw_data = (
+                export_raw
+                .to_csv(
+                    index=False
+                )
+                .encode(
+                    "utf-8"
+                )
+            )
 
-## Metodologi
+            raw_disabled = False
 
-{methodology}
+        st.download_button(
+            label=(
+                "Download Monte Carlo CSV"
+            ),
 
-## Uraian HKI
+            data=raw_data,
 
-{hki}
-"""
+            file_name=(
+                "hasil_monte_carlo_"
+                "kiosk_bioskop.csv"
+            ),
 
-    st.download_button(
-        label=(
-            "Download ringkasan Markdown"
-        ),
-        data=report.encode("utf-8"),
-        file_name=(
-            "ringkasan_laporan_abm_cbt.md"
-        ),
-        mime="text/markdown",
-    )
+            mime="text/csv",
+
+            use_container_width=True,
+
+            disabled=raw_disabled,
+        )
+
+    with download_column_3:
+        report_text = (
+            "RINGKASAN SIMULASI "
+            "KIOSK BIOSKOP\n\n"
+
+            f"Tanggal ekspor: "
+            f"{datetime.now():%d-%m-%Y %H:%M}\n"
+
+            f"Iterasi per skenario: "
+            f"{st.session_state['comparison_iterations']}\n\n"
+
+            f"{result_narrative}\n"
+        )
+
+        st.download_button(
+            label=(
+                "Download narasi TXT"
+            ),
+
+            data=(
+                report_text.encode(
+                    "utf-8"
+                )
+            ),
+
+            file_name=(
+                "ringkasan_analisis_"
+                "kiosk_bioskop.txt"
+            ),
+
+            mime="text/plain",
+
+            use_container_width=True,
+        )
 
 
 # ============================================================
@@ -2497,11 +3430,11 @@ Tanggal ekspor: {datetime.now():%Y-%m-%d %H:%M:%S}
 
 st.markdown(
     """
-    <div class="foot">
-        Dashboard akademik ABM + CBT.
-        Gunakan 1000 iterasi untuk hasil final.
-        Semua parameter merupakan representasi
-        operasional untuk simulasi pendidikan.
+    <div class="footer">
+        Dashboard Simulasi Antrean
+        Self-Service Kiosk Bioskop ·
+        hasil awal mengacu pada notebook
+        project dengan 100 iterasi Monte Carlo.
     </div>
     """,
     unsafe_allow_html=True,

@@ -1,64 +1,62 @@
-﻿# Dashboard Akademik ABM CBT Kecemasan
+# Dashboard Simulasi Self-Service Kiosk Bioskop
 
-Dashboard Streamlit untuk tugas besar Pemodelan dan Simulasi menggunakan Agent-Based Modeling, skenario intervensi CBT, dan eksperimen Monte Carlo.
+Dashboard ini merupakan luaran Tugas Besar Pemodelan dan Simulasi dengan objek sistem antrean self-service kiosk pada bioskop.
 
-## Fitur Utama
+## Pendekatan
 
-- Empat skenario what-if.
-- State chart Tenang, Cemas Ringan, Cemas Tinggi, Panik, dan Pulih.
-- Parameter A, S, D, R, dan P.
-- Monte Carlo sampai 1000 iterasi.
-- Grafik dinamika kecemasan.
-- Grafik persentase agen panik.
-- Komposisi state agen.
-- Ranking skenario.
-- Skor stabilitas.
-- Snapshot grid agen.
-- Distribusi atribut agen.
-- Analisis sensitivitas parameter.
-- Export CSV.
-- Narasi metodologi.
-- Kesimpulan otomatis.
-- Uraian luaran HKI.
+Project menggabungkan:
 
-## Menjalankan pada Windows
+- Agent-Based Modeling
+- Discrete Event Simulation
+- Monte Carlo Simulation
+- What-If Analysis
+- Capacity Optimization
+- Sensitivity Analysis
 
-Buka PowerShell pada folder project, kemudian jalankan:
+## Skenario
+
+1. Tanpa Intervensi
+2. Intervensi Reaktif
+3. Intervensi Preventif
+4. Beban Tinggi
+
+## Fitur Dashboard
+
+- Hasil acuan dari notebook project
+- Perbandingan empat skenario
+- Simulasi parameter interaktif
+- Grafik panjang antrean
+- Distribusi waktu tunggu
+- Boxplot Monte Carlo
+- Optimasi jumlah kiosk
+- Analisis sensitivitas
+- Rekomendasi kapasitas
+- Narasi hasil otomatis
+- Download ringkasan CSV
+- Download data Monte Carlo
+- Download narasi laporan
+
+## Menjalankan Secara Lokal
+
+Buka PowerShell pada folder project, lalu jalankan:
 
     Set-ExecutionPolicy -Scope Process Bypass
-
-Selanjutnya jalankan:
-
     .\run_local.ps1
 
-Dashboard akan terbuka melalui browser pada alamat lokal Streamlit.
+Dashboard akan terbuka melalui:
+
+    http://localhost:8501
 
 ## Deploy ke Streamlit Community Cloud
 
-1. Upload seluruh isi project ke repository GitHub.
-2. Masuk ke Streamlit Community Cloud.
-3. Pilih repository dan branch main.
-4. Gunakan streamlit_app.py sebagai Main file path.
-5. Klik Deploy.
+Gunakan konfigurasi:
 
-Ngrok tidak diperlukan untuk deployment permanen pada Streamlit Community Cloud.
+- Repository: tsabitaarni155-cell/dasboard-pemodelan
+- Branch: main
+- Main file path: streamlit_app.py
 
-## Struktur Project
+Project ini tidak menggunakan ngrok dan tidak membutuhkan packages.txt.
 
-    ABM_CBT_Dashboard_Akademik
-    ├── .streamlit
-    │   └── config.toml
-    ├── data
-    │   └── .gitkeep
-    ├── outputs
-    │   └── .gitkeep
-    ├── streamlit_app.py
-    ├── requirements.txt
-    ├── packages.txt
-    ├── run_local.ps1
-    ├── README.md
-    └── .gitignore
+## Catatan
 
-## Catatan Etis
-
-Aplikasi ini merupakan simulasi edukatif. Aplikasi tidak digunakan sebagai alat diagnosis klinis dan bukan pengganti psikolog atau psikiater.
+Hasil default pada dashboard mengacu pada eksperimen notebook sebanyak 100 iterasi Monte Carlo per skenario. Pengguna dapat menjalankan ulang eksperimen dari dashboard dengan parameter yang berbeda.

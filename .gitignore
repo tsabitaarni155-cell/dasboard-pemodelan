@@ -1,10 +1,10 @@
-﻿.venv/
+.venv/
 __pycache__/
 *.py[cod]
 *.log
 .env
 .streamlit/secrets.toml
-outputs/*
-!outputs/.gitkeep
 .DS_Store
 Thumbs.db
+outputs/*
+!outputs/.gitkeep
