@@ -153,8 +153,7 @@ NOTEBOOK_RESULTS = pd.DataFrame(
 # CSS DAN TEMA VISUAL
 # ============================================================
 
-st.markdown(
-    """
+st.html("""
     <style>
     :root {
         --navy: #102A43;
@@ -414,9 +413,7 @@ st.markdown(
         font-size: 0.82rem;
     }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+    """)
 
 
 # ============================================================
@@ -428,8 +425,7 @@ def metric_card(
     value: str,
     note: str,
 ) -> None:
-    st.markdown(
-        f"""
+    st.html(f"""
         <div class="metric-card">
             <div class="metric-label">
                 {label}
@@ -443,9 +439,7 @@ def metric_card(
                 {note}
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """)
 
 
 def ordered(
@@ -1457,8 +1451,7 @@ for key, value in (
 # HEADER
 # ============================================================
 
-st.markdown(
-    """
+st.html("""
     <div class="hero">
         <small>
             Tugas Besar Pemodelan dan Simulasi
@@ -1496,9 +1489,7 @@ st.markdown(
             </span>
         </div>
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+    """)
 
 
 # ============================================================
@@ -1506,8 +1497,7 @@ st.markdown(
 # ============================================================
 
 with st.sidebar:
-    st.markdown(
-        "## Informasi Project"
+    st.html("## Informasi Project"
     )
 
     st.caption(
@@ -1704,13 +1694,10 @@ with overview_tab:
                     membatalkan transaksi.
                 </p>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            """)
 
     with objective_column:
-        st.markdown(
-            """
+        st.html("""
             <div class="box">
                 <h3>
                     Tujuan simulasi
@@ -1724,16 +1711,13 @@ with overview_tab:
                     kinerja sistem antrean.
                 </p>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            """)
 
     st.subheader(
         "State Chart Pelanggan"
     )
 
-    st.markdown(
-        """
+    st.html("""
         <div class="box">
             <div class="flow">
                 <span class="node">
@@ -1779,9 +1763,7 @@ with overview_tab:
                 </span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """)
 
     st.subheader(
         "Formulasi Indikator"
@@ -1792,8 +1774,7 @@ with overview_tab:
     )
 
     with formula_column_1:
-        st.markdown(
-            """
+        st.html("""
             <div class="formula">
                 Waktu tunggu =
                 mulai dilayani − waktu datang
@@ -1806,13 +1787,10 @@ with overview_tab:
                 Throughput =
                 pelanggan selesai / durasi (jam)
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            """)
 
     with formula_column_2:
-        st.markdown(
-            """
+        st.html("""
             <div class="formula">
                 Utilisasi =
                 busy time / (kiosk × durasi) × 100%
@@ -1825,9 +1803,7 @@ with overview_tab:
                 Panjang antrean =
                 agen yang menunggu pada waktu t
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            """)
 
     scenario_rows = []
 
@@ -2120,15 +2096,12 @@ with result_tab:
         ],
     )
 
-    st.markdown(
-        (
+    st.html((
             '<div class="insight">'
             '<b>Interpretasi:</b> '
             f'{automatic_narrative}'
             '</div>'
-        ),
-        unsafe_allow_html=True,
-    )
+        ))
 
 
 # ============================================================
@@ -2658,15 +2631,12 @@ with simulation_tab:
 
             css_class = "insight"
 
-        st.markdown(
-            (
+        st.html((
                 f'<div class="{css_class}">'
                 '<b>Rekomendasi:</b> '
                 f'{recommendation}'
                 '</div>'
-            ),
-            unsafe_allow_html=True,
-        )
+            ))
 
 
 # ============================================================
@@ -2860,8 +2830,7 @@ with optimization_tab:
                 ]
             )
 
-            st.markdown(
-                (
+            st.html((
                     '<div class="insight">'
                     '<b>Rekomendasi:</b> '
                     f'{recommended_kiosk} kiosk '
@@ -2870,20 +2839,15 @@ with optimization_tab:
                     '≤ 1 menit, pembatalan ≤ 1%, '
                     'dan utilisasi ≤ 85%.'
                     '</div>'
-                ),
-                unsafe_allow_html=True,
-            )
+                ))
 
         else:
-            st.markdown(
-                """
+            st.html("""
                 <div class="warning">
                     Belum ada konfigurasi yang
                     memenuhi seluruh sasaran.
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                """)
 
         optimization_chart_column_1, optimization_chart_column_2 = (
             st.columns(2)
@@ -3281,8 +3245,7 @@ with export_tab:
         "Asumsi dan Batasan"
     )
 
-    st.markdown(
-        """
+    st.html("""
         1. Setiap pelanggan hanya membutuhkan satu kiosk.
         2. Setiap kiosk hanya melayani satu pelanggan pada satu waktu.
         3. Pelanggan mengikuti antrean *first come, first served*.
@@ -3436,6 +3399,4 @@ st.markdown(
         hasil awal mengacu pada notebook
         project dengan 100 iterasi Monte Carlo.
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+    """)
