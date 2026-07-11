@@ -1,0 +1,22 @@
+test,metric,comparison,statistic,p_value,p_adjusted,significant_0_05
+Kruskal-Wallis,avg_wait_time,seluruh skenario,3375.25465459885,0.0,0.0,True
+Mann-Whitney U,avg_wait_time,Tanpa Intervensi vs Intervensi Reaktif,529508.0,0.02230872791530099,0.02230872791530099,True
+Mann-Whitney U,avg_wait_time,Tanpa Intervensi vs Intervensi Preventif,999947.0,0.0,0.0,True
+Mann-Whitney U,avg_wait_time,Tanpa Intervensi vs Beban Tinggi,23.0,0.0,0.0,True
+Mann-Whitney U,avg_wait_time,Intervensi Reaktif vs Intervensi Preventif,999984.0,0.0,0.0,True
+Mann-Whitney U,avg_wait_time,Intervensi Reaktif vs Beban Tinggi,0.0,0.0,0.0,True
+Mann-Whitney U,avg_wait_time,Intervensi Preventif vs Beban Tinggi,0.0,0.0,0.0,True
+Kruskal-Wallis,abandonment_percent,seluruh skenario,3211.661462258589,0.0,0.0,True
+Mann-Whitney U,abandonment_percent,Tanpa Intervensi vs Intervensi Reaktif,571378.5,5.462357689757043e-16,5.462357689757043e-16,True
+Mann-Whitney U,abandonment_percent,Tanpa Intervensi vs Intervensi Preventif,628500.0,1.16369181399966e-65,3.4910754419989796e-65,True
+Mann-Whitney U,abandonment_percent,Tanpa Intervensi vs Beban Tinggi,26.0,0.0,0.0,True
+Mann-Whitney U,abandonment_percent,Intervensi Reaktif vs Intervensi Preventif,560000.0,1.495091095591063e-29,2.990182191182126e-29,True
+Mann-Whitney U,abandonment_percent,Intervensi Reaktif vs Beban Tinggi,6.5,0.0,0.0,True
+Mann-Whitney U,abandonment_percent,Intervensi Preventif vs Beban Tinggi,0.0,0.0,0.0,True
+Kruskal-Wallis,utilization_percent,seluruh skenario,3374.20685976156,0.0,0.0,True
+Mann-Whitney U,utilization_percent,Tanpa Intervensi vs Intervensi Reaktif,507483.0,0.5622875216489687,0.5622875216489687,False
+Mann-Whitney U,utilization_percent,Tanpa Intervensi vs Intervensi Preventif,1000000.0,0.0,0.0,True
+Mann-Whitney U,utilization_percent,Tanpa Intervensi vs Beban Tinggi,9.0,0.0,0.0,True
+Mann-Whitney U,utilization_percent,Intervensi Reaktif vs Intervensi Preventif,999994.0,0.0,0.0,True
+Mann-Whitney U,utilization_percent,Intervensi Reaktif vs Beban Tinggi,0.0,0.0,0.0,True
+Mann-Whitney U,utilization_percent,Intervensi Preventif vs Beban Tinggi,0.0,0.0,0.0,True

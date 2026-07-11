@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+.env
+.streamlit/secrets.toml
+.DS_Store
+Thumbs.db
+outputs/*
+!outputs/.gitkeep

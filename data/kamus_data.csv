@@ -1,0 +1,16 @@
+column,type,description
+customer_id,integer,Nomor unik pelanggan dalam satu replikasi
+scenario,string,Nama skenario simulasi
+arrival_time,float,Waktu kedatangan pelanggan dalam menit
+start_service_time,float,Waktu mulai menggunakan kiosk
+departure_time,float,Waktu pelanggan selesai atau batal
+wait_time,float,Durasi menunggu sebelum dilayani atau batal
+service_time,float,Durasi pelayanan; nol untuk pelanggan batal
+system_time,float,Total waktu pelanggan berada dalam sistem
+state,string,Status akhir: selesai atau batal
+patience_time,float,Batas kesabaran pelanggan
+num_kiosks,integer,Jumlah kiosk aktif
+mean_interarrival_time,float,Rata-rata interval kedatangan
+mean_service_time,float,Rata-rata waktu pelayanan
+duration,integer,Horizon kedatangan simulasi
+seed,integer,Seed random untuk reproduksibilitas

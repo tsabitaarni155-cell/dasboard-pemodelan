@@ -1,62 +1,66 @@
-# Dashboard Simulasi Self-Service Kiosk Bioskop
+# Dashboard Final Simulasi Kiosk Bioskop
 
-Dashboard ini merupakan luaran Tugas Besar Pemodelan dan Simulasi dengan objek sistem antrean self-service kiosk pada bioskop.
+Dashboard Streamlit untuk tugas besar **Simulasi Sistem Antrean Self-Service Kiosk Bioskop Menggunakan Agent-Based Modeling, Discrete Event Simulation, dan Monte Carlo**.
 
-## Pendekatan
+## Perbaikan utama
 
-Project menggabungkan:
+- Membaca hasil final 1.000 iterasi per skenario dari CSV, sehingga tidak menghitung ulang 4.000 simulasi saat aplikasi dibuka.
+- Simulasi interaktif dibatasi maksimal 100 iterasi agar stabil pada Streamlit Community Cloud.
+- Fungsi simulasi disamakan dengan notebook final.
+- Intervensi preventif tidak lagi dihitung dua kali.
+- Utilisasi hanya menghitung busy time di dalam horizon operasional.
+- Total kedatangan dihitung dari seluruh agen yang benar-benar datang.
+- Menyediakan upload CSV/Excel, validasi, pemetaan kolom, analisis, dan download dataset bersih.
+- Menggunakan `width="stretch"` untuk komponen data dan Plotly.
+- Tidak menggunakan ngrok, token, Graphviz, atau `packages.txt`.
 
-- Agent-Based Modeling
-- Discrete Event Simulation
-- Monte Carlo Simulation
-- What-If Analysis
-- Capacity Optimization
-- Sensitivity Analysis
+## Struktur repository
 
-## Skenario
+```text
+.
+├── streamlit_app.py
+├── requirements.txt
+├── README.md
+├── .gitignore
+├── .streamlit/
+│   └── config.toml
+└── data/
+    ├── dataset_pelanggan_kiosk_bioskop.csv
+    ├── dataset_jejak_antrean_per_menit.csv
+    ├── hasil_monte_carlo_1000_iterasi.csv
+    ├── ringkasan_skenario_1000_iterasi.csv
+    ├── hasil_uji_statistik.csv
+    ├── ringkasan_optimasi_kiosk.csv
+    ├── hasil_uji_kondisi_ekstrem.csv
+    ├── hasil_sensitivitas_interval_kedatangan.csv
+    ├── kamus_data.csv
+    └── parameter_skenario.csv
+```
 
-1. Tanpa Intervensi
-2. Intervensi Reaktif
-3. Intervensi Preventif
-4. Beban Tinggi
+## Menjalankan secara lokal
 
-## Fitur Dashboard
-
-- Hasil acuan dari notebook project
-- Perbandingan empat skenario
-- Simulasi parameter interaktif
-- Grafik panjang antrean
-- Distribusi waktu tunggu
-- Boxplot Monte Carlo
-- Optimasi jumlah kiosk
-- Analisis sensitivitas
-- Rekomendasi kapasitas
-- Narasi hasil otomatis
-- Download ringkasan CSV
-- Download data Monte Carlo
-- Download narasi laporan
-
-## Menjalankan Secara Lokal
-
-Buka PowerShell pada folder project, lalu jalankan:
-
-    Set-ExecutionPolicy -Scope Process Bypass
-    .\run_local.ps1
-
-Dashboard akan terbuka melalui:
-
-    http://localhost:8501
+```powershell
+cd "C:\Users\tsabi\Downloads\ABM_CBT_Dashboard_Akademik"
+py -m pip install -r requirements.txt
+py -m streamlit run streamlit_app.py
+```
 
 ## Deploy ke Streamlit Community Cloud
 
-Gunakan konfigurasi:
+- Repository: `tsabitaarni155-cell/dasboard-pemodelan`
+- Branch: `main`
+- Main file path: `streamlit_app.py`
 
-- Repository: tsabitaarni155-cell/dasboard-pemodelan
-- Branch: main
-- Main file path: streamlit_app.py
+Setelah semua file disalin ke repository:
 
-Project ini tidak menggunakan ngrok dan tidak membutuhkan packages.txt.
+```powershell
+git add -A
+git commit -m "Update final dashboard kiosk bioskop"
+git push
+```
 
-## Catatan
+Streamlit biasanya melakukan deploy ulang otomatis. Gunakan **Manage app → Reboot app** apabila pembaruan belum tampil.
 
-Hasil default pada dashboard mengacu pada eksperimen notebook sebanyak 100 iterasi Monte Carlo per skenario. Pengguna dapat menjalankan ulang eksperimen dari dashboard dengan parameter yang berbeda.
+## Dataset upload
+
+Dataset lain dapat menggunakan nama kolom yang sama ataupun berbeda. Pada tab **Upload & Validasi Dataset**, pengguna dapat memetakan kolom sumber ke kolom standar seperti `arrival_time`, `start_service_time`, `departure_time`, `wait_time`, `service_time`, `system_time`, `state`, dan `scenario`.

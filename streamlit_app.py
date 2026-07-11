@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Dict, Tuple
+import gc
+import io
+import math
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -12,29 +15,26 @@ import streamlit as st
 
 
 # ============================================================
-# KONFIGURASI HALAMAN
+# KONFIGURASI APLIKASI
 # ============================================================
-
 st.set_page_config(
-    page_title="Dashboard Kiosk Bioskop",
+    page_title="Dashboard Simulasi Kiosk Bioskop",
     page_icon="🎟️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 
-# ============================================================
-# KONFIGURASI SKENARIO
-# ============================================================
-
-SCENARIOS = [
+SCENARIO_ORDER = [
     "Tanpa Intervensi",
     "Intervensi Reaktif",
     "Intervensi Preventif",
     "Beban Tinggi",
 ]
 
-CONFIGS: Dict[str, Dict[str, float | int | str]] = {
+SCENARIOS: dict[str, dict[str, Any]] = {
     "Tanpa Intervensi": {
         "scenario_type": "base",
         "num_kiosks": 2,
@@ -65,455 +65,242 @@ CONFIGS: Dict[str, Dict[str, float | int | str]] = {
     },
 }
 
-DESCRIPTIONS = {
-    "Tanpa Intervensi": (
-        "Kondisi dasar dengan dua kiosk dan tanpa strategi tambahan."
-    ),
-    "Intervensi Reaktif": (
-        "Pelayanan dipercepat ketika antrean mencapai ambang tertentu."
-    ),
-    "Intervensi Preventif": (
-        "Kapasitas disiapkan sejak awal melalui tiga kiosk dan "
-        "pelayanan yang lebih cepat."
-    ),
-    "Beban Tinggi": (
-        "Kondisi ramai dengan kedatangan lebih cepat dan "
-        "batas kesabaran pelanggan lebih rendah."
-    ),
+METRIC_LABELS = {
+    "avg_wait_time": "Rata-rata waktu tunggu (menit)",
+    "avg_wait_served": "Waktu tunggu pelanggan selesai (menit)",
+    "avg_queue_length": "Rata-rata panjang antrean",
+    "max_queue_length": "Panjang antrean maksimum",
+    "utilization_percent": "Utilisasi kiosk (%)",
+    "throughput_per_hour": "Throughput (pelanggan/jam)",
+    "abandonment_percent": "Pelanggan batal (%)",
 }
 
-COLORS = {
-    "Tanpa Intervensi": "#475569",
-    "Intervensi Reaktif": "#2563EB",
-    "Intervensi Preventif": "#0F766E",
-    "Beban Tinggi": "#C2410C",
+REQUIRED_DATA_FILES = {
+    "Ringkasan Monte Carlo": "ringkasan_skenario_1000_iterasi.csv",
+    "Hasil Monte Carlo": "hasil_monte_carlo_1000_iterasi.csv",
+    "Dataset pelanggan": "dataset_pelanggan_kiosk_bioskop.csv",
+    "Jejak antrean": "dataset_jejak_antrean_per_menit.csv",
+    "Uji statistik": "hasil_uji_statistik.csv",
+    "Optimasi kiosk": "ringkasan_optimasi_kiosk.csv",
+    "Sensitivitas": "hasil_sensitivitas_interval_kedatangan.csv",
+    "Kondisi ekstrem": "hasil_uji_kondisi_ekstrem.csv",
+    "Kamus data": "kamus_data.csv",
+    "Parameter skenario": "parameter_skenario.csv",
 }
 
 
 # ============================================================
-# HASIL ACUAN DARI NOTEBOOK PROJECT
-# 100 ITERASI MONTE CARLO PER SKENARIO
+# TAMPILAN
 # ============================================================
-
-NOTEBOOK_RESULTS = pd.DataFrame(
-    [
-        {
-            "scenario": "Tanpa Intervensi",
-            "total_arrivals": 158.91,
-            "served_customers": 158.43,
-            "abandoned_customers": 0.48,
-            "avg_wait_time": 1.572541,
-            "avg_queue_length": 0.537958,
-            "max_queue_length": 5.16,
-            "utilization_percent": 66.530257,
-            "throughput_per_hour": 19.80375,
-            "abandonment_percent": 0.283632,
-        },
-        {
-            "scenario": "Intervensi Reaktif",
-            "total_arrivals": 159.46,
-            "served_customers": 158.92,
-            "abandoned_customers": 0.54,
-            "avg_wait_time": 1.673533,
-            "avg_queue_length": 0.573833,
-            "max_queue_length": 5.30,
-            "utilization_percent": 66.652307,
-            "throughput_per_hour": 19.86500,
-            "abandonment_percent": 0.322663,
-        },
-        {
-            "scenario": "Intervensi Preventif",
-            "total_arrivals": 160.79,
-            "served_customers": 160.79,
-            "abandoned_customers": 0.00,
-            "avg_wait_time": 0.111570,
-            "avg_queue_length": 0.038521,
-            "max_queue_length": 2.26,
-            "utilization_percent": 36.510208,
-            "throughput_per_hour": 20.09875,
-            "abandonment_percent": 0.000000,
-        },
-        {
-            "scenario": "Beban Tinggi",
-            "total_arrivals": 234.39,
-            "served_customers": 199.67,
-            "abandoned_customers": 34.72,
-            "avg_wait_time": 5.797899,
-            "avg_queue_length": 2.892875,
-            "max_queue_length": 10.40,
-            "utilization_percent": 94.430388,
-            "throughput_per_hour": 24.95875,
-            "abandonment_percent": 14.554703,
-        },
-    ]
+st.html(
+    """
+    <style>
+    :root {
+        --navy: #0B1F3A;
+        --blue: #1E5AA8;
+        --gold: #D6A84B;
+        --ink: #182230;
+        --muted: #64748B;
+        --surface: #FFFFFF;
+        --soft: #F5F7FB;
+        --border: #DCE3EC;
+    }
+    .stApp { background: #F7F9FC; }
+    .main .block-container {
+        max-width: 1450px;
+        padding-top: 1.2rem;
+        padding-bottom: 3rem;
+    }
+    section[data-testid="stSidebar"] { background: #F1F5F9; }
+    .hero {
+        background: linear-gradient(135deg, #0B1F3A 0%, #164B86 68%, #1E5AA8 100%);
+        border-radius: 22px;
+        padding: 30px 32px;
+        color: white;
+        box-shadow: 0 16px 38px rgba(11, 31, 58, 0.18);
+        margin-bottom: 18px;
+    }
+    .hero .eyebrow {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #D8E7FA;
+        margin-bottom: 8px;
+    }
+    .hero h1 {
+        color: white;
+        font-size: clamp(1.7rem, 3vw, 2.65rem);
+        line-height: 1.15;
+        margin: 0 0 10px 0;
+    }
+    .hero p {
+        color: #E8F0FA;
+        max-width: 1050px;
+        line-height: 1.55;
+        margin: 0;
+    }
+    .badge {
+        display: inline-block;
+        margin: 14px 7px 0 0;
+        padding: 6px 11px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,.25);
+        background: rgba(255,255,255,.11);
+        color: white;
+        font-size: .79rem;
+        font-weight: 600;
+    }
+    .info-card {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 18px 19px;
+        min-height: 145px;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, .05);
+    }
+    .info-card h3 { margin: 0 0 8px 0; color: var(--navy); font-size: 1.05rem; }
+    .info-card p { margin: 0; color: #475569; line-height: 1.55; font-size: .92rem; }
+    .note-box {
+        background: #EEF5FF;
+        border: 1px solid #C9DCF7;
+        border-left: 5px solid #1E5AA8;
+        border-radius: 13px;
+        padding: 14px 16px;
+        color: #183B67;
+        margin: 9px 0 15px 0;
+    }
+    .warning-box {
+        background: #FFF8E8;
+        border: 1px solid #F1D58A;
+        border-left: 5px solid #D6A84B;
+        border-radius: 13px;
+        padding: 14px 16px;
+        color: #604813;
+        margin: 9px 0 15px 0;
+    }
+    .footer {
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: .82rem;
+        margin-top: 30px;
+        padding-top: 13px;
+    }
+    div[data-testid="stMetric"] {
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 15px;
+        padding: 14px 16px;
+        box-shadow: 0 5px 14px rgba(15,23,42,.04);
+    }
+    div[data-testid="stMetricLabel"] { color: #64748B; }
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; flex-wrap: wrap; }
+    .stTabs [data-baseweb="tab"] {
+        border: 1px solid var(--border);
+        background: white;
+        border-radius: 999px;
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+    @media (max-width: 760px) {
+        .hero { padding: 22px 20px; border-radius: 17px; }
+        .main .block-container { padding-left: .8rem; padding-right: .8rem; }
+    }
+    </style>
+    """
 )
 
 
 # ============================================================
-# CSS DAN TEMA VISUAL
+# UTILITAS DATA
 # ============================================================
+def safe_read_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path)
 
-st.html("""
-    <style>
-    :root {
-        --navy: #102A43;
-        --blue: #2563EB;
-        --gold: #D6A84B;
-        --teal: #0F766E;
-        --ink: #1E293B;
-        --muted: #64748B;
-        --line: #DCE3EA;
-        --paper: #F5F7FA;
+
+@st.cache_data(show_spinner=False)
+def load_bundled_data() -> dict[str, pd.DataFrame]:
+    return {
+        key: safe_read_csv(DATA_DIR / filename)
+        for key, filename in REQUIRED_DATA_FILES.items()
     }
 
-    .stApp {
-        background:
-            radial-gradient(
-                circle at 92% 0%,
-                rgba(214, 168, 75, 0.12),
-                transparent 24rem
-            ),
-            linear-gradient(
-                180deg,
-                #FBFCFE 0%,
-                #F4F6F9 100%
-            );
-    }
 
-    .main .block-container {
-        max-width: 1480px;
-        padding-top: 1.1rem;
-        padding-bottom: 3rem;
-    }
+def ordered_frame(df: pd.DataFrame, scenario_col: str = "scenario") -> pd.DataFrame:
+    result = df.copy()
+    if scenario_col in result.columns:
+        result[scenario_col] = pd.Categorical(
+            result[scenario_col], categories=SCENARIO_ORDER, ordered=True
+        )
+        result = result.sort_values(scenario_col).reset_index(drop=True)
+        result[scenario_col] = result[scenario_col].astype("string")
+    return result
 
-    h1, h2, h3 {
-        color: var(--navy);
-        letter-spacing: -0.025em;
-    }
 
-    .hero {
-        position: relative;
-        overflow: hidden;
-        border-radius: 22px;
-        padding: 30px 34px;
-        background:
-            linear-gradient(
-                115deg,
-                #0F2742 0%,
-                #163D63 65%,
-                #1D4ED8 100%
-            );
-        box-shadow:
-            0 18px 45px rgba(15, 39, 66, 0.18);
-        color: white;
-        margin-bottom: 1rem;
-    }
+def csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8-sig")
 
-    .hero::after {
-        content: "";
-        position: absolute;
-        width: 245px;
-        height: 245px;
-        border:
-            34px solid rgba(214, 168, 75, 0.16);
-        border-radius: 50%;
-        right: -65px;
-        top: -95px;
-    }
 
-    .hero small {
-        color: #F4D68A;
-        font-weight: 800;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-    }
+def format_number(value: Any, digits: int = 2) -> str:
+    try:
+        value_float = float(value)
+    except (TypeError, ValueError):
+        return "–"
+    if not np.isfinite(value_float):
+        return "–"
+    return f"{value_float:,.{digits}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    .hero h1 {
-        color: white;
-        margin: 0.45rem 0 0.5rem;
-        font-size:
-            clamp(1.8rem, 3vw, 2.6rem);
-    }
 
-    .hero p {
-        max-width: 1040px;
-        color: rgba(255, 255, 255, 0.88);
-        line-height: 1.65;
-        margin: 0;
+def make_state_chart() -> go.Figure:
+    nodes = {
+        "Datang": (0.05, 0.55),
+        "Menunggu": (0.30, 0.55),
+        "Dilayani": (0.57, 0.55),
+        "Selesai": (0.84, 0.55),
+        "Batal": (0.30, 0.12),
     }
+    fig = go.Figure()
+    for name, (x, y) in nodes.items():
+        fig.add_shape(
+            type="rect", x0=x, y0=y, x1=x + 0.15, y1=y + 0.16,
+            line=dict(color="#1E5AA8", width=2), fillcolor="#EEF5FF",
+            layer="below",
+        )
+        fig.add_annotation(x=x + 0.075, y=y + 0.08, text=f"<b>{name}</b>", showarrow=False)
 
-    .tags {
-        display: flex;
-        gap: 0.45rem;
-        flex-wrap: wrap;
-        margin-top: 1rem;
-    }
-
-    .tag {
-        padding: 0.32rem 0.68rem;
-        border:
-            1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 999px;
-        background:
-            rgba(255, 255, 255, 0.08);
-        font-size: 0.75rem;
-        font-weight: 700;
-    }
-
-    .metric-card {
-        background:
-            rgba(255, 255, 255, 0.96);
-        border:
-            1px solid var(--line);
-        border-top:
-            4px solid var(--gold);
-        border-radius: 16px;
-        padding: 16px 18px;
-        min-height: 118px;
-        box-shadow:
-            0 8px 24px rgba(15, 39, 66, 0.06);
-    }
-
-    .metric-label {
-        color: var(--muted);
-        font-size: 0.72rem;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.065em;
-    }
-
-    .metric-value {
-        color: var(--navy);
-        font-size: 1.55rem;
-        font-weight: 850;
-        line-height: 1.15;
-        margin-top: 0.35rem;
-    }
-
-    .metric-note {
-        color: var(--muted);
-        font-size: 0.8rem;
-        margin-top: 0.42rem;
-    }
-
-    .box {
-        background: white;
-        border:
-            1px solid var(--line);
-        border-radius: 16px;
-        padding: 18px 20px;
-        box-shadow:
-            0 6px 18px rgba(15, 39, 66, 0.04);
-        height: 100%;
-    }
-
-    .box h3 {
-        margin-top: 0;
-        font-size: 1.05rem;
-    }
-
-    .formula {
-        background: #F1F5F9;
-        border-left:
-            5px solid var(--blue);
-        border-radius: 12px;
-        padding: 14px 16px;
-        font-family:
-            ui-monospace,
-            SFMono-Regular,
-            Consolas,
-            monospace;
-        line-height: 1.65;
-    }
-
-    .flow {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        margin: 0.5rem 0;
-    }
-
-    .node {
-        padding: 0.55rem 0.78rem;
-        border-radius: 10px;
-        border: 1px solid #CBD5E1;
-        background: #F8FAFC;
-        color: #1E293B;
-        font-size: 0.82rem;
-        font-weight: 750;
-    }
-
-    .arrow {
-        color: #94A3B8;
-        font-weight: 900;
-    }
-
-    .insight {
-        border-left:
-            5px solid var(--teal);
-        background: #F0FDFA;
-        color: #134E4A;
-        border-radius: 12px;
-        padding: 13px 16px;
-        margin: 0.75rem 0;
-    }
-
-    .warning {
-        border-left:
-            5px solid #C2410C;
-        background: #FFF7ED;
-        color: #7C2D12;
-        border-radius: 12px;
-        padding: 13px 16px;
-        margin: 0.75rem 0;
-    }
-
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0.45rem;
-        flex-wrap: wrap;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        border:
-            1px solid var(--line);
-        background: white;
-        border-radius: 999px;
-        padding: 0.45rem 0.9rem;
-        font-weight: 700;
-    }
-
-    section[data-testid="stSidebar"] {
-        background: #F7F9FC;
-        border-right:
-            1px solid #E2E8F0;
-    }
-
-    div[data-testid="stDataFrame"] {
-        border:
-            1px solid var(--line);
-        border-radius: 13px;
-        overflow: hidden;
-    }
-
-    div[data-testid="stForm"] {
-        border:
-            1px solid var(--line);
-        border-radius: 16px;
-        background:
-            rgba(255, 255, 255, 0.82);
-    }
-
-    .footer {
-        margin-top: 2rem;
-        padding-top: 1rem;
-        border-top:
-            1px solid var(--line);
-        color: var(--muted);
-        font-size: 0.82rem;
-    }
-    </style>
-    """)
+    arrows = [
+        ((0.20, 0.63), (0.30, 0.63), "masuk antrean"),
+        ((0.45, 0.63), (0.57, 0.63), "kiosk tersedia"),
+        ((0.72, 0.63), (0.84, 0.63), "pelayanan selesai"),
+        ((0.375, 0.55), (0.375, 0.28), "batas sabar habis"),
+    ]
+    for start, end, label in arrows:
+        fig.add_annotation(
+            x=end[0], y=end[1], ax=start[0], ay=start[1],
+            xref="x", yref="y", axref="x", ayref="y",
+            text=label, showarrow=True, arrowhead=3, arrowsize=1,
+            arrowwidth=1.6, arrowcolor="#64748B", font=dict(size=11),
+        )
+    fig.update_xaxes(visible=False, range=[0, 1.03])
+    fig.update_yaxes(visible=False, range=[0, 0.9])
+    fig.update_layout(height=340, margin=dict(l=10, r=10, t=20, b=10), plot_bgcolor="white")
+    return fig
 
 
 # ============================================================
-# FUNGSI TAMPILAN
+# MESIN SIMULASI — SAMA DENGAN NOTEBOOK FINAL
 # ============================================================
-
-def metric_card(
-    label: str,
-    value: str,
-    note: str,
-) -> None:
-    st.html(f"""
-        <div class="metric-card">
-            <div class="metric-label">
-                {label}
-            </div>
-
-            <div class="metric-value">
-                {value}
-            </div>
-
-            <div class="metric-note">
-                {note}
-            </div>
-        </div>
-        """)
-
-
-def ordered(
-    dataframe: pd.DataFrame,
-) -> pd.DataFrame:
-    result = dataframe.copy()
-
-    result["scenario"] = pd.Categorical(
-        result["scenario"],
-        categories=SCENARIOS,
-        ordered=True,
-    )
-
-    return (
-        result
-        .sort_values("scenario")
-        .reset_index(drop=True)
-    )
-
-
-def show_table(
-    dataframe: pd.DataFrame,
-    digits: int = 3,
-) -> None:
-    st.dataframe(
-        dataframe.round(digits),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# ============================================================
-# DISTRIBUSI WAKTU
-# ============================================================
-
-def generate_service_time(
-    mean_service_time: float,
-    rng: np.random.Generator,
-) -> float:
+def generate_service_time(mean_service_time: float, rng: np.random.Generator) -> float:
     sigma = 0.25
-
-    mu = (
-        np.log(mean_service_time)
-        - 0.5 * sigma**2
-    )
-
-    return max(
-        0.1,
-        float(
-            rng.lognormal(
-                mean=mu,
-                sigma=sigma,
-            )
-        ),
-    )
+    mu = np.log(mean_service_time) - 0.5 * sigma**2
+    return max(0.1, float(rng.lognormal(mu, sigma)))
 
 
-def generate_interarrival_time(
-    mean_interarrival_time: float,
-    rng: np.random.Generator,
-) -> float:
-    return max(
-        0.1,
-        float(
-            rng.exponential(
-                mean_interarrival_time
-            )
-        ),
-    )
+def generate_interarrival_time(mean_interarrival_time: float, rng: np.random.Generator) -> float:
+    return max(0.1, float(rng.exponential(mean_interarrival_time)))
 
-
-# ============================================================
-# FUNGSI SIMULASI UTAMA
-# ============================================================
 
 def simulate_kiosk(
     seed: int = 42,
@@ -522,435 +309,176 @@ def simulate_kiosk(
     mean_interarrival_time: float = 3.0,
     mean_service_time: float = 4.0,
     patience_time: float = 12.0,
-    scenario_name: str = "Simulasi",
+    scenario_name: str = "Simulasi Interaktif",
     scenario_type: str = "base",
-    reactive_threshold: int = 6,
+    reactive_threshold: int = 4,
     reactive_service_reduction: float = 0.85,
-    preventive_service_reduction: float = 0.90,
-) -> Tuple[
-    dict,
-    pd.DataFrame,
-    pd.DataFrame,
-]:
+    collect_details: bool = False,
+) -> tuple[dict[str, Any], pd.DataFrame | None, pd.DataFrame | None]:
+    if duration <= 0:
+        raise ValueError("Durasi harus lebih besar dari nol.")
+    if num_kiosks < 1:
+        raise ValueError("Jumlah kiosk minimal satu.")
+    if min(mean_interarrival_time, mean_service_time, patience_time) <= 0:
+        raise ValueError("Seluruh parameter waktu harus lebih besar dari nol.")
+
     rng = np.random.default_rng(seed)
+    env = simpy.Environment()
+    kiosk = simpy.Resource(env, capacity=int(num_kiosks))
+    customer_records: list[dict[str, Any]] = []
+    queue_records: list[dict[str, Any]] = []
 
-    environment = simpy.Environment()
-
-    kiosk = simpy.Resource(
-        environment,
-        capacity=num_kiosks,
-    )
-
-    customers = []
-    queue_records = []
-
-    busy_time = 0.0
-
-    customer_counter = {
-        "value": 0
-    }
+    arrivals = served = served_within_horizon = abandoned = 0
+    wait_all_sum = wait_served_sum = wait_abandoned_sum = 0.0
+    system_time_sum = busy_time_within_horizon = 0.0
+    queue_wait_time_within_horizon = 0.0
+    max_queue = 0
 
     def monitor_queue():
-        while True:
+        while env.now <= duration:
             queue_records.append(
                 {
-                    "time":
-                        float(environment.now),
-
-                    "queue_length":
-                        len(kiosk.queue),
-
-                    "in_service":
-                        kiosk.count,
-
-                    "scenario":
-                        scenario_name,
+                    "time": float(env.now),
+                    "queue_length": len(kiosk.queue),
+                    "in_service": int(kiosk.count),
+                    "scenario": scenario_name,
+                    "seed": seed,
                 }
             )
+            yield env.timeout(1)
 
-            yield environment.timeout(1)
+    def customer_process(customer_id: int):
+        nonlocal served, served_within_horizon, abandoned
+        nonlocal wait_all_sum, wait_served_sum, wait_abandoned_sum
+        nonlocal system_time_sum, busy_time_within_horizon
+        nonlocal queue_wait_time_within_horizon, max_queue
 
-    def customer_process(
-        customer_id: int,
-    ):
-        nonlocal busy_time
-
-        arrival_time = float(
-            environment.now
-        )
-
-        customer_record = {
-            "customer_id":
-                customer_id,
-
-            "scenario":
-                scenario_name,
-
-            "arrival_time":
-                arrival_time,
-
-            "start_service_time":
-                np.nan,
-
-            "departure_time":
-                np.nan,
-
-            "wait_time":
-                np.nan,
-
-            "service_time":
-                np.nan,
-
-            "system_time":
-                np.nan,
-
-            "state":
-                "menunggu",
-
-            "patience_time":
-                patience_time,
+        arrival_time = float(env.now)
+        record = {
+            "customer_id": customer_id,
+            "scenario": scenario_name,
+            "arrival_time": arrival_time,
+            "start_service_time": np.nan,
+            "departure_time": np.nan,
+            "wait_time": np.nan,
+            "service_time": np.nan,
+            "system_time": np.nan,
+            "state": "menunggu",
+            "patience_time": patience_time,
+            "num_kiosks": num_kiosks,
+            "mean_interarrival_time": mean_interarrival_time,
+            "mean_service_time": mean_service_time,
+            "duration": duration,
+            "seed": seed,
         }
 
         with kiosk.request() as request:
-            result = yield (
-                request
-                | environment.timeout(
-                    patience_time
-                )
+            max_queue = max(max_queue, len(kiosk.queue))
+            outcome = yield request | env.timeout(patience_time)
+            event_time = float(env.now)
+            queue_wait_time_within_horizon += max(
+                0.0, min(event_time, duration) - min(arrival_time, duration)
             )
 
-            if request not in result:
-                customer_record.update(
+            if request not in outcome:
+                abandoned += 1
+                wait_time = event_time - arrival_time
+                wait_all_sum += wait_time
+                wait_abandoned_sum += wait_time
+                system_time_sum += wait_time
+                record.update(
                     {
-                        "departure_time":
-                            float(
-                                environment.now
-                            ),
-
-                        "wait_time":
-                            float(
-                                environment.now
-                                - arrival_time
-                            ),
-
-                        "service_time":
-                            0.0,
-
-                        "system_time":
-                            float(
-                                environment.now
-                                - arrival_time
-                            ),
-
-                        "state":
-                            "batal",
+                        "departure_time": event_time,
+                        "wait_time": wait_time,
+                        "service_time": 0.0,
+                        "system_time": wait_time,
+                        "state": "batal",
                     }
                 )
-
-                customers.append(
-                    customer_record
-                )
-
+                if collect_details:
+                    customer_records.append(record)
                 return
 
-            start_service_time = float(
-                environment.now
+            start_service_time = event_time
+            wait_time = start_service_time - arrival_time
+            effective_service_time = mean_service_time
+            if scenario_type == "reactive" and len(kiosk.queue) >= reactive_threshold:
+                effective_service_time *= reactive_service_reduction
+
+            service_time = generate_service_time(effective_service_time, rng)
+            planned_departure = start_service_time + service_time
+            busy_time_within_horizon += max(
+                0.0,
+                min(planned_departure, duration) - min(start_service_time, duration),
             )
 
-            effective_service_time = (
-                mean_service_time
-            )
+            yield env.timeout(service_time)
+            departure_time = float(env.now)
+            served += 1
+            if departure_time <= duration:
+                served_within_horizon += 1
 
-            if (
-                scenario_type
-                == "reactive"
-                and len(kiosk.queue)
-                >= reactive_threshold
-            ):
-                effective_service_time *= (
-                    reactive_service_reduction
-                )
-
-            elif (
-                scenario_type
-                == "preventive"
-            ):
-                effective_service_time *= (
-                    preventive_service_reduction
-                )
-
-            service_time = (
-                generate_service_time(
-                    effective_service_time,
-                    rng,
-                )
-            )
-
-            busy_time += service_time
-
-            yield environment.timeout(
-                service_time
-            )
-
-            departure_time = float(
-                environment.now
-            )
-
-            customer_record.update(
+            wait_all_sum += wait_time
+            wait_served_sum += wait_time
+            system_time_sum += wait_time + service_time
+            record.update(
                 {
-                    "start_service_time":
-                        start_service_time,
-
-                    "departure_time":
-                        departure_time,
-
-                    "wait_time":
-                        (
-                            start_service_time
-                            - arrival_time
-                        ),
-
-                    "service_time":
-                        service_time,
-
-                    "system_time":
-                        (
-                            departure_time
-                            - arrival_time
-                        ),
-
-                    "state":
-                        "selesai",
+                    "start_service_time": start_service_time,
+                    "departure_time": departure_time,
+                    "wait_time": wait_time,
+                    "service_time": service_time,
+                    "system_time": wait_time + service_time,
+                    "state": "selesai",
                 }
             )
+            if collect_details:
+                customer_records.append(record)
 
-            customers.append(
-                customer_record
-            )
+    def arrival_source():
+        nonlocal arrivals
+        while env.now < duration:
+            arrivals += 1
+            env.process(customer_process(arrivals))
+            yield env.timeout(generate_interarrival_time(mean_interarrival_time, rng))
 
-    def arrival_process():
-        while environment.now < duration:
-            customer_counter["value"] += 1
-
-            environment.process(
-                customer_process(
-                    customer_counter["value"]
-                )
-            )
-
-            yield environment.timeout(
-                generate_interarrival_time(
-                    mean_interarrival_time,
-                    rng,
-                )
-            )
-
-    environment.process(
-        arrival_process()
-    )
-
-    environment.process(
-        monitor_queue()
-    )
-
-    environment.run(
-        until=duration
-    )
-
-    customers_df = pd.DataFrame(
-        customers
-    )
-
-    queue_df = pd.DataFrame(
-        queue_records
-    )
-
-    if customers_df.empty:
-        summary = {
-            "scenario":
-                scenario_name,
-
-            "total_arrivals":
-                0,
-
-            "served_customers":
-                0,
-
-            "abandoned_customers":
-                0,
-
-            "avg_wait_time":
-                0.0,
-
-            "avg_system_time":
-                0.0,
-
-            "avg_queue_length":
-                0.0,
-
-            "max_queue_length":
-                0.0,
-
-            "utilization_percent":
-                0.0,
-
-            "throughput_per_hour":
-                0.0,
-
-            "abandonment_percent":
-                0.0,
-
-            "num_kiosks":
-                num_kiosks,
-
-            "mean_interarrival_time":
-                mean_interarrival_time,
-
-            "mean_service_time":
-                mean_service_time,
-
-            "patience_time":
-                patience_time,
-
-            "duration":
-                duration,
-        }
-
-        return (
-            summary,
-            customers_df,
-            queue_df,
-        )
-
-    served = customers_df[
-        customers_df["state"]
-        == "selesai"
-    ]
-
-    abandoned = customers_df[
-        customers_df["state"]
-        == "batal"
-    ]
-
-    total_customers = len(
-        customers_df
-    )
-
-    served_customers = len(
-        served
-    )
-
-    abandoned_customers = len(
-        abandoned
-    )
+    env.process(arrival_source())
+    if collect_details:
+        env.process(monitor_queue())
+    env.run()
 
     summary = {
-        "scenario":
-            scenario_name,
-
-        "total_arrivals":
-            total_customers,
-
-        "served_customers":
-            served_customers,
-
-        "abandoned_customers":
-            abandoned_customers,
-
-        "avg_wait_time":
-            float(
-                customers_df[
-                    "wait_time"
-                ].mean()
-            ),
-
-        "avg_system_time":
-            float(
-                customers_df[
-                    "system_time"
-                ].mean()
-            ),
-
-        "avg_queue_length":
-            float(
-                queue_df[
-                    "queue_length"
-                ].mean()
-            ),
-
-        "max_queue_length":
-            float(
-                queue_df[
-                    "queue_length"
-                ].max()
-            ),
-
-        "utilization_percent":
-            float(
-                min(
-                    100.0,
-                    (
-                        busy_time
-                        / (
-                            num_kiosks
-                            * duration
-                        )
-                        * 100
-                    ),
-                )
-            ),
-
-        "throughput_per_hour":
-            float(
-                served_customers
-                / (
-                    duration / 60
-                )
-            ),
-
-        "abandonment_percent":
-            float(
-                (
-                    abandoned_customers
-                    / total_customers
-                    * 100
-                )
-                if total_customers > 0
-                else 0
-            ),
-
-        "num_kiosks":
-            num_kiosks,
-
-        "mean_interarrival_time":
-            mean_interarrival_time,
-
-        "mean_service_time":
-            mean_service_time,
-
-        "patience_time":
-            patience_time,
-
-        "duration":
-            duration,
+        "scenario": scenario_name,
+        "scenario_type": scenario_type,
+        "seed": seed,
+        "total_arrivals": arrivals,
+        "served_customers": served,
+        "served_within_horizon": served_within_horizon,
+        "abandoned_customers": abandoned,
+        "avg_wait_time": wait_all_sum / arrivals if arrivals else 0.0,
+        "avg_wait_served": wait_served_sum / served if served else 0.0,
+        "avg_wait_abandoned": wait_abandoned_sum / abandoned if abandoned else 0.0,
+        "avg_system_time": system_time_sum / arrivals if arrivals else 0.0,
+        "avg_queue_length": queue_wait_time_within_horizon / duration,
+        "max_queue_length": max_queue,
+        "utilization_percent": busy_time_within_horizon / (num_kiosks * duration) * 100,
+        "throughput_per_hour": served_within_horizon / (duration / 60),
+        "abandonment_percent": abandoned / arrivals * 100 if arrivals else 0.0,
+        "num_kiosks": num_kiosks,
+        "mean_interarrival_time": mean_interarrival_time,
+        "mean_service_time": mean_service_time,
+        "patience_time": patience_time,
+        "duration": duration,
+        "reactive_threshold": reactive_threshold,
     }
-
-    return (
-        summary,
-        customers_df,
-        queue_df,
-    )
+    details = pd.DataFrame(customer_records) if collect_details else None
+    queue_details = pd.DataFrame(queue_records) if collect_details else None
+    return summary, details, queue_details
 
 
-# ============================================================
-# MONTE CARLO
-# ============================================================
-
-@st.cache_data(
-    show_spinner=False
-)
-def run_monte_carlo(
+@st.cache_data(show_spinner=False, max_entries=24)
+def run_light_monte_carlo(
     n_iterations: int,
+    seed: int,
     duration: int,
     num_kiosks: int,
     mean_interarrival_time: float,
@@ -958,2444 +486,830 @@ def run_monte_carlo(
     patience_time: float,
     scenario_name: str,
     scenario_type: str,
-    start_seed: int,
-    reactive_threshold: int = 6,
-) -> pd.DataFrame:
-    rows = []
-
-    for index in range(
-        n_iterations
-    ):
-        summary, _, _ = simulate_kiosk(
-            seed=(
-                start_seed
-                + index
-            ),
-
-            duration=
-                duration,
-
-            num_kiosks=
-                num_kiosks,
-
-            mean_interarrival_time=
-                mean_interarrival_time,
-
-            mean_service_time=
-                mean_service_time,
-
-            patience_time=
-                patience_time,
-
-            scenario_name=
-                scenario_name,
-
-            scenario_type=
-                scenario_type,
-
-            reactive_threshold=
-                reactive_threshold,
-        )
-
-        summary["iteration"] = (
-            index + 1
-        )
-
-        rows.append(
-            summary
-        )
-
-    return pd.DataFrame(
-        rows
-    )
-
-
-def summarize(
-    raw_dataframe: pd.DataFrame,
-) -> pd.DataFrame:
-    metrics = [
-        "total_arrivals",
-        "served_customers",
-        "abandoned_customers",
-        "avg_wait_time",
-        "avg_system_time",
-        "avg_queue_length",
-        "max_queue_length",
-        "utilization_percent",
-        "throughput_per_hour",
-        "abandonment_percent",
-    ]
-
-    summary = (
-        raw_dataframe
-        .groupby(
-            "scenario",
-            as_index=False,
-        )[metrics]
-        .mean()
-    )
-
-    return ordered(
-        summary
-    )
-
-
-@st.cache_data(
-    show_spinner=False
-)
-def run_all_scenarios(
-    iterations: int,
-    duration: int,
     reactive_threshold: int,
-) -> Tuple[
-    pd.DataFrame,
-    pd.DataFrame,
-]:
-    frames = []
-
-    for index, name in enumerate(
-        SCENARIOS
-    ):
-        config = CONFIGS[name]
-
-        frame = run_monte_carlo(
-            n_iterations=
-                iterations,
-
-            duration=
-                duration,
-
-            num_kiosks=
-                int(
-                    config[
-                        "num_kiosks"
-                    ]
-                ),
-
-            mean_interarrival_time=
-                float(
-                    config[
-                        "mean_interarrival_time"
-                    ]
-                ),
-
-            mean_service_time=
-                float(
-                    config[
-                        "mean_service_time"
-                    ]
-                ),
-
-            patience_time=
-                float(
-                    config[
-                        "patience_time"
-                    ]
-                ),
-
-            scenario_name=
-                name,
-
-            scenario_type=
-                str(
-                    config[
-                        "scenario_type"
-                    ]
-                ),
-
-            start_seed=
-                (
-                    1000
-                    + index * 10000
-                ),
-
-            reactive_threshold=
-                reactive_threshold,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    rows: list[dict[str, Any]] = []
+    first_details = pd.DataFrame()
+    first_queue = pd.DataFrame()
+    for iteration in range(n_iterations):
+        result, details, queue = simulate_kiosk(
+            seed=seed + iteration,
+            duration=duration,
+            num_kiosks=num_kiosks,
+            mean_interarrival_time=mean_interarrival_time,
+            mean_service_time=mean_service_time,
+            patience_time=patience_time,
+            scenario_name=scenario_name,
+            scenario_type=scenario_type,
+            reactive_threshold=reactive_threshold,
+            collect_details=(iteration == 0),
         )
-
-        frames.append(
-            frame
-        )
-
-    raw_results = pd.concat(
-        frames,
-        ignore_index=True,
-    )
-
-    return (
-        summarize(
-            raw_results
-        ),
-        raw_results,
-    )
+        result["iteration"] = iteration + 1
+        rows.append(result)
+        if iteration == 0:
+            first_details = details if details is not None else pd.DataFrame()
+            first_queue = queue if queue is not None else pd.DataFrame()
+    gc.collect()
+    return pd.DataFrame(rows), first_details, first_queue
 
 
-# ============================================================
-# OPTIMASI JUMLAH KIOSK
-# ============================================================
-
-@st.cache_data(
-    show_spinner=False
-)
-def optimize_kiosks(
-    max_kiosk: int,
-    iterations: int,
+@st.cache_data(show_spinner=False, max_entries=12)
+def run_light_optimization(
+    max_kiosks: int,
+    n_iterations: int,
+    seed: int,
     duration: int,
-    interarrival: float,
-    service: float,
-    patience: float,
-) -> Tuple[
-    pd.DataFrame,
-    pd.DataFrame,
-]:
-    frames = []
-
-    for kiosk_count in range(
-        1,
-        max_kiosk + 1,
-    ):
-        frame = run_monte_carlo(
-            n_iterations=
-                iterations,
-
-            duration=
-                duration,
-
-            num_kiosks=
-                kiosk_count,
-
-            mean_interarrival_time=
-                interarrival,
-
-            mean_service_time=
-                service,
-
-            patience_time=
-                patience,
-
-            scenario_name=
-                f"{kiosk_count} Kiosk",
-
-            scenario_type=
-                "base",
-
-            start_seed=
-                (
-                    5000
-                    + kiosk_count * 1000
-                ),
-        )
-
-        frames.append(
-            frame
-        )
-
-    raw_results = pd.concat(
-        frames,
-        ignore_index=True,
-    )
-
-    summary = (
-        raw_results
-        .groupby(
-            "num_kiosks",
-            as_index=False,
-        )
-        .agg(
-            avg_wait_time=(
-                "avg_wait_time",
-                "mean",
-            ),
-
-            avg_queue_length=(
-                "avg_queue_length",
-                "mean",
-            ),
-
-            utilization_percent=(
-                "utilization_percent",
-                "mean",
-            ),
-
-            throughput_per_hour=(
-                "throughput_per_hour",
-                "mean",
-            ),
-
-            abandonment_percent=(
-                "abandonment_percent",
-                "mean",
-            ),
-        )
-    )
-
-    return (
-        summary,
-        raw_results,
-    )
-
-
-# ============================================================
-# ANALISIS SENSITIVITAS
-# ============================================================
-
-@st.cache_data(
-    show_spinner=False
-)
-def sensitivity_analysis(
-    parameter: str,
-    values: Tuple[
-        float,
-        ...
-    ],
-    iterations: int,
-    kiosk_count: int,
+    mean_interarrival_time: float,
+    mean_service_time: float,
+    patience_time: float,
 ) -> pd.DataFrame:
-    rows = []
+    rows: list[dict[str, Any]] = []
+    for kiosks in range(1, max_kiosks + 1):
+        for iteration in range(n_iterations):
+            result, _, _ = simulate_kiosk(
+                seed=seed + kiosks * 10_000 + iteration,
+                duration=duration,
+                num_kiosks=kiosks,
+                mean_interarrival_time=mean_interarrival_time,
+                mean_service_time=mean_service_time,
+                patience_time=patience_time,
+                scenario_name=f"{kiosks} Kiosk",
+                collect_details=False,
+            )
+            rows.append(result)
+    raw = pd.DataFrame(rows)
+    return (
+        raw.groupby("num_kiosks", as_index=False)[
+            [
+                "avg_wait_time",
+                "avg_queue_length",
+                "utilization_percent",
+                "throughput_per_hour",
+                "abandonment_percent",
+            ]
+        ]
+        .mean()
+        .sort_values("num_kiosks")
+    )
 
-    for index, value in enumerate(
-        values
-    ):
-        interarrival = 3.0
-        service = 4.0
-        patience = 12.0
 
-        if (
-            parameter
-            == "Interval kedatangan"
-        ):
-            interarrival = value
-
-        elif (
-            parameter
-            == "Waktu pelayanan"
-        ):
-            service = value
-
-        else:
-            patience = value
-
-        raw_results = run_monte_carlo(
-            n_iterations=
-                iterations,
-
-            duration=
-                480,
-
-            num_kiosks=
-                kiosk_count,
-
-            mean_interarrival_time=
-                interarrival,
-
-            mean_service_time=
-                service,
-
-            patience_time=
-                patience,
-
-            scenario_name=
-                (
-                    f"{parameter} "
-                    f"{value:.2f}"
-                ),
-
-            scenario_type=
-                "base",
-
-            start_seed=
-                (
-                    20000
-                    + index * 1000
-                ),
-        )
-
+@st.cache_data(show_spinner=False, max_entries=12)
+def run_light_sensitivity(
+    values: tuple[float, ...],
+    parameter_name: str,
+    n_iterations: int,
+    seed: int,
+    duration: int,
+    num_kiosks: int,
+    mean_interarrival_time: float,
+    mean_service_time: float,
+    patience_time: float,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for value_index, value in enumerate(values):
+        summaries: list[dict[str, Any]] = []
+        for iteration in range(n_iterations):
+            params = {
+                "mean_interarrival_time": mean_interarrival_time,
+                "mean_service_time": mean_service_time,
+                "patience_time": patience_time,
+            }
+            params[parameter_name] = float(value)
+            result, _, _ = simulate_kiosk(
+                seed=seed + value_index * 10_000 + iteration,
+                duration=duration,
+                num_kiosks=num_kiosks,
+                scenario_name=f"{parameter_name}={value:.2f}",
+                collect_details=False,
+                **params,
+            )
+            summaries.append(result)
+        temp = pd.DataFrame(summaries)
         rows.append(
             {
-                "parameter":
-                    parameter,
-
-                "value":
-                    value,
-
-                "avg_wait_time":
-                    raw_results[
-                        "avg_wait_time"
-                    ].mean(),
-
-                "avg_queue_length":
-                    raw_results[
-                        "avg_queue_length"
-                    ].mean(),
-
-                "utilization_percent":
-                    raw_results[
-                        "utilization_percent"
-                    ].mean(),
-
-                "throughput_per_hour":
-                    raw_results[
-                        "throughput_per_hour"
-                    ].mean(),
-
-                "abandonment_percent":
-                    raw_results[
-                        "abandonment_percent"
-                    ].mean(),
+                parameter_name: value,
+                "avg_wait_time": temp["avg_wait_time"].mean(),
+                "avg_queue_length": temp["avg_queue_length"].mean(),
+                "utilization_percent": temp["utilization_percent"].mean(),
+                "abandonment_percent": temp["abandonment_percent"].mean(),
             }
         )
-
-    return pd.DataFrame(
-        rows
-    )
+    return pd.DataFrame(rows)
 
 
 # ============================================================
-# NARASI HASIL OTOMATIS
+# UPLOAD DAN STANDARDISASI DATASET
 # ============================================================
+def read_uploaded_table(uploaded_file) -> pd.DataFrame:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    uploaded_file.seek(0)
+    if suffix == ".csv":
+        try:
+            return pd.read_csv(uploaded_file, sep=None, engine="python")
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding="latin-1", sep=None, engine="python")
+    if suffix in {".xlsx", ".xls"}:
+        return pd.read_excel(uploaded_file)
+    raise ValueError("Format file tidak didukung.")
 
-def narrative(
-    summary_dataframe: pd.DataFrame,
-    iterations: int,
-) -> str:
-    best = summary_dataframe.loc[
-        summary_dataframe[
-            "avg_wait_time"
-        ].idxmin()
+
+def normalize_state(series: pd.Series) -> pd.Series:
+    mapping_finished = {
+        "selesai", "served", "complete", "completed", "done", "success",
+        "dilayani", "selesai dilayani",
+    }
+    mapping_cancelled = {
+        "batal", "abandoned", "cancelled", "canceled", "leave", "left",
+        "batal menunggu", "dropout",
+    }
+
+    def convert(value: Any) -> str:
+        text = str(value).strip().lower()
+        if text in mapping_finished:
+            return "selesai"
+        if text in mapping_cancelled:
+            return "batal"
+        return text
+
+    return series.map(convert)
+
+
+def apply_column_mapping(df: pd.DataFrame, mapping: dict[str, str | None]) -> pd.DataFrame:
+    result = df.copy()
+    rename_map = {source: target for target, source in mapping.items() if source}
+    result = result.rename(columns=rename_map)
+
+    numeric_columns = [
+        "arrival_time", "start_service_time", "departure_time", "wait_time",
+        "service_time", "system_time", "patience_time", "num_kiosks",
+        "mean_interarrival_time", "mean_service_time", "duration", "seed",
     ]
+    for column in numeric_columns:
+        if column in result.columns:
+            result[column] = pd.to_numeric(result[column], errors="coerce")
 
-    worst = summary_dataframe.loc[
-        summary_dataframe[
-            "avg_wait_time"
-        ].idxmax()
-    ]
+    if "wait_time" not in result.columns and {"start_service_time", "arrival_time"}.issubset(result.columns):
+        result["wait_time"] = result["start_service_time"] - result["arrival_time"]
+    if "service_time" not in result.columns and {"departure_time", "start_service_time"}.issubset(result.columns):
+        result["service_time"] = result["departure_time"] - result["start_service_time"]
+    if "system_time" not in result.columns and {"departure_time", "arrival_time"}.issubset(result.columns):
+        result["system_time"] = result["departure_time"] - result["arrival_time"]
+    if "scenario" not in result.columns:
+        result["scenario"] = "Dataset Upload"
+    if "state" in result.columns:
+        result["state"] = normalize_state(result["state"])
+    return result
 
-    highest_throughput = (
-        summary_dataframe.loc[
-            summary_dataframe[
-                "throughput_per_hour"
-            ].idxmax()
-        ]
-    )
 
-    return (
-        f"Simulasi menggunakan "
-        f"{iterations} iterasi Monte Carlo "
-        f"per skenario. "
-
-        f"{best['scenario']} memberikan "
-        f"waktu tunggu terendah sebesar "
-        f"{best['avg_wait_time']:.2f} menit "
-        f"dengan pembatalan "
-        f"{best['abandonment_percent']:.2f}%. "
-
-        f"Kondisi paling berat terdapat pada "
-        f"{worst['scenario']} dengan waktu "
-        f"tunggu {worst['avg_wait_time']:.2f} "
-        f"menit dan pembatalan "
-        f"{worst['abandonment_percent']:.2f}%. "
-
-        f"Throughput tertinggi terdapat pada "
-        f"{highest_throughput['scenario']} "
-        f"sebesar "
-        f"{highest_throughput['throughput_per_hour']:.2f} "
-        f"pelanggan per jam. "
-
-        "Hasil ini menunjukkan bahwa "
-        "persiapan kapasitas secara preventif "
-        "lebih stabil daripada menunggu "
-        "antrean memburuk."
-    )
+def uploaded_metrics(df: pd.DataFrame) -> dict[str, float]:
+    total = len(df)
+    states = df["state"].astype(str).str.lower() if "state" in df.columns else pd.Series(dtype=str)
+    served = int((states == "selesai").sum())
+    abandoned = int((states == "batal").sum())
+    return {
+        "total": total,
+        "served": served,
+        "abandoned": abandoned,
+        "avg_wait": float(df["wait_time"].mean()) if "wait_time" in df.columns else np.nan,
+        "avg_service": float(df["service_time"].mean()) if "service_time" in df.columns else np.nan,
+        "avg_system": float(df["system_time"].mean()) if "system_time" in df.columns else np.nan,
+        "abandonment": abandoned / total * 100 if total else 0.0,
+    }
 
 
 # ============================================================
-# SESSION STATE
+# DATA BAWAAN DAN SIDEBAR
 # ============================================================
-
-DEFAULT_SESSION = {
-    "comparison_summary":
-        ordered(
-            NOTEBOOK_RESULTS
-        ),
-
-    "comparison_raw":
-        None,
-
-    "comparison_iterations":
-        100,
-
-    "comparison_source":
-        "Hasil notebook",
-
-    "single_result":
-        None,
-
-    "optimization":
-        None,
-
-    "optimization_raw":
-        None,
-
-    "sensitivity":
-        None,
-}
-
-for key, value in (
-    DEFAULT_SESSION.items()
-):
-    if key not in st.session_state:
-        st.session_state[key] = value
-
-
-# ============================================================
-# HEADER
-# ============================================================
-
-st.html("""
-    <div class="hero">
-        <small>
-            Tugas Besar Pemodelan dan Simulasi
-        </small>
-
-        <h1>
-            Simulasi Sistem Antrean
-            Self-Service Kiosk Bioskop
-        </h1>
-
-        <p>
-            Dashboard akademik berbasis
-            Agent-Based Discrete Event Simulation
-            untuk menganalisis waktu tunggu,
-            panjang antrean, utilisasi kiosk,
-            throughput, serta pelanggan yang
-            meninggalkan antrean.
-        </p>
-
-        <div class="tags">
-            <span class="tag">
-                Agent-Based Modeling
-            </span>
-
-            <span class="tag">
-                Discrete Event Simulation
-            </span>
-
-            <span class="tag">
-                Monte Carlo
-            </span>
-
-            <span class="tag">
-                What-If Analysis
-            </span>
-        </div>
-    </div>
-    """)
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
+data = load_bundled_data()
+missing_files = [
+    filename for filename in REQUIRED_DATA_FILES.values()
+    if not (DATA_DIR / filename).exists()
+]
 
 with st.sidebar:
-    st.subheader("Informasi Project")
-
-    st.caption(
-        "Objek: antrean pembelian tiket "
-        "melalui self-service kiosk bioskop."
-    )
-
-    st.write(
-        "Hasil acuan: "
-        "**100 iterasi/skenario**"
-    )
-
-    st.write(
-        "Durasi acuan: "
-        "**480 menit**"
-    )
-
-    st.divider()
-
+    st.title("Informasi Project")
     st.markdown(
-        "### Indikator"
+        "**Tsabita Arni Safitri Azzila**  \n"
+        "NIM: 202310370311155  \n"
+        "Program Studi Informatika  \n"
+        "Universitas Muhammadiyah Malang"
     )
-
-    st.caption(
-        "Waktu tunggu: durasi sebelum "
-        "pelanggan memperoleh kiosk."
-    )
-
-    st.caption(
-        "Utilisasi: persentase kapasitas "
-        "kiosk yang terpakai."
-    )
-
-    st.caption(
-        "Throughput: pelanggan selesai "
-        "dilayani per jam."
-    )
-
-    st.caption(
-        "Abandonment: pelanggan pergi "
-        "karena melewati batas sabar."
-    )
-
     st.divider()
+    st.markdown("**Mode dashboard**")
+    st.success("Hasil final 1.000 iterasi dibaca dari CSV.")
+    st.info("Simulasi web dibatasi maksimal 100 iterasi agar stabil di Streamlit Cloud.")
+    if missing_files:
+        st.error("Ada file data yang belum tersedia di folder data.")
+        st.caption("\n".join(missing_files))
+    else:
+        st.caption("Seluruh dataset final berhasil ditemukan.")
+    st.divider()
+    st.caption("Versi pembaruan dashboard final • tanpa ngrok • tanpa Graphviz")
 
-    st.info(
-        "Gunakan 100 iterasi untuk "
-        "mereplikasi notebook. "
-        "Mode 1000 iterasi memerlukan "
-        "waktu proses lebih lama."
-    )
-
-
-# ============================================================
-# KPI UTAMA
-# ============================================================
-
-current_summary = (
-    st.session_state[
-        "comparison_summary"
-    ]
+st.html(
+    """
+    <div class="hero">
+      <div class="eyebrow">Tugas Besar Pemodelan dan Simulasi</div>
+      <h1>Simulasi Sistem Antrean Self-Service Kiosk Bioskop</h1>
+      <p>Dashboard akademik untuk membandingkan skenario antrean, menampilkan hasil Monte Carlo 1.000 iterasi, menjalankan simulasi ringan, mengoptimalkan jumlah kiosk, serta memvalidasi dataset eksternal.</p>
+      <span class="badge">Agent-Based Modeling</span>
+      <span class="badge">Discrete Event Simulation</span>
+      <span class="badge">Monte Carlo</span>
+      <span class="badge">What-If Analysis</span>
+    </div>
+    """
 )
 
-best_scenario = (
-    current_summary.loc[
-        current_summary[
-            "avg_wait_time"
-        ].idxmin()
-    ]
-)
+summary_final = ordered_frame(data["Ringkasan Monte Carlo"])
+mc_final = ordered_frame(data["Hasil Monte Carlo"])
 
-worst_cancel = (
-    current_summary.loc[
-        current_summary[
-            "abandonment_percent"
-        ].idxmax()
-    ]
-)
-
-top_throughput = (
-    current_summary.loc[
-        current_summary[
-            "throughput_per_hour"
-        ].idxmax()
-    ]
-)
-
-metric_columns = st.columns(4)
-
-with metric_columns[0]:
-    metric_card(
-        "Skenario terbaik",
-        str(
-            best_scenario[
-                "scenario"
-            ]
-        ),
-        (
-            "Waktu tunggu "
-            f"{best_scenario['avg_wait_time']:.2f} "
-            "menit"
-        ),
-    )
-
-with metric_columns[1]:
-    metric_card(
-        "Waktu tunggu terendah",
-        (
-            f"{best_scenario['avg_wait_time']:.2f} "
-            "menit"
-        ),
-        "Rata-rata seluruh iterasi",
-    )
-
-with metric_columns[2]:
-    metric_card(
-        "Pembatalan tertinggi",
-        (
-            f"{worst_cancel['abandonment_percent']:.2f}%"
-        ),
-        str(
-            worst_cancel[
-                "scenario"
-            ]
-        ),
-    )
-
-with metric_columns[3]:
-    metric_card(
-        "Throughput tertinggi",
-        (
-            f"{top_throughput['throughput_per_hour']:.2f}"
-            "/jam"
-        ),
-        str(
-            top_throughput[
-                "scenario"
-            ]
-        ),
-    )
-
-
-# ============================================================
-# TAB DASHBOARD
-# ============================================================
+if not summary_final.empty:
+    best_wait = summary_final.loc[summary_final["avg_wait_time_mean"].idxmin()]
+    highest_abandon = summary_final.loc[summary_final["abandonment_percent_mean"].idxmax()]
+    highest_throughput = summary_final.loc[summary_final["throughput_per_hour_mean"].idxmax()]
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Skenario paling stabil", str(best_wait["scenario"]))
+    k2.metric("Waktu tunggu terendah", f"{best_wait['avg_wait_time_mean']:.2f} menit")
+    k3.metric("Pembatalan tertinggi", f"{highest_abandon['abandonment_percent_mean']:.2f}%")
+    k4.metric("Throughput tertinggi", f"{highest_throughput['throughput_per_hour_mean']:.2f}/jam")
 
 (
-    overview_tab,
-    result_tab,
-    simulation_tab,
-    optimization_tab,
-    sensitivity_tab,
-    export_tab,
+    tab_overview,
+    tab_results,
+    tab_simulation,
+    tab_upload,
+    tab_optimization,
+    tab_sensitivity,
+    tab_method,
 ) = st.tabs(
     [
         "Ringkasan Project",
-        "Hasil Eksperimen",
+        "Hasil Monte Carlo Final",
         "Simulasi Interaktif",
+        "Upload & Validasi Dataset",
         "Optimasi Kiosk",
-        "Sensitivitas",
+        "Analisis Sensitivitas",
         "Metodologi & Ekspor",
     ]
 )
 
 
 # ============================================================
-# TAB 1 - RINGKASAN PROJECT
+# TAB 1 — RINGKASAN
 # ============================================================
-
-with overview_tab:
-    st.subheader(
-        "Latar Belakang dan Tujuan"
-    )
-
-    problem_column, objective_column = (
-        st.columns(2)
-    )
-
-    with problem_column:
+with tab_overview:
+    st.header("Ringkasan Project")
+    c1, c2 = st.columns(2)
+    with c1:
         st.html(
             """
-            <div class="box">
-                <h3>
-                    Masalah yang dimodelkan
-                </h3>
-
-                <p>
-                    Lonjakan pengunjung dapat
-                    membuat kapasitas kiosk tidak
-                    mencukupi. Dampaknya berupa
-                    waktu tunggu tinggi, antrean
-                    panjang, utilisasi mendekati
-                    penuh, dan pelanggan yang
-                    membatalkan transaksi.
-                </p>
+            <div class="info-card">
+              <h3>Masalah yang dimodelkan</h3>
+              <p>Ketika kedatangan pelanggan lebih cepat daripada kemampuan kiosk melayani, antrean, waktu tunggu, utilisasi, dan risiko pelanggan meninggalkan antrean dapat meningkat. Simulasi digunakan untuk menguji strategi sebelum diterapkan pada sistem nyata.</p>
             </div>
-            """)
-
-    with objective_column:
-        st.html("""
-            <div class="box">
-                <h3>
-                    Tujuan simulasi
-                </h3>
-
-                <p>
-                    Menguji pengaruh laju kedatangan,
-                    jumlah kiosk, waktu pelayanan,
-                    batas kesabaran, serta intervensi
-                    reaktif dan preventif terhadap
-                    kinerja sistem antrean.
-                </p>
+            """
+        )
+    with c2:
+        st.html(
+            """
+            <div class="info-card">
+              <h3>Tujuan simulasi</h3>
+              <p>Membandingkan kondisi dasar, intervensi reaktif, intervensi preventif, dan beban tinggi; kemudian mencari kapasitas kiosk minimum yang mampu menjaga waktu tunggu, abandonment, dan utilisasi pada tingkat yang terkendali.</p>
             </div>
-            """)
+            """
+        )
 
-    st.subheader(
-        "State Chart Pelanggan"
+    st.subheader("State pelanggan")
+    st.plotly_chart(make_state_chart(), width="stretch", config={"displayModeBar": False})
+
+    st.subheader("Formulasi indikator")
+    f1, f2, f3, f4 = st.columns(4)
+    f1.code("Waktu tunggu = mulai dilayani − datang")
+    f2.code("Waktu sistem = keluar − datang")
+    f3.code("Utilisasi = busy time / kapasitas × 100%")
+    f4.code("Abandonment = batal / datang × 100%")
+
+    st.subheader("Parameter empat skenario")
+    params = data["Parameter skenario"].rename(
+        columns={
+            "scenario_name": "Skenario",
+            "scenario_type": "Tipe",
+            "num_kiosks": "Jumlah kiosk",
+            "mean_interarrival_time": "Interval kedatangan (menit)",
+            "mean_service_time": "Waktu pelayanan (menit)",
+            "patience_time": "Batas sabar (menit)",
+        }
+    )
+    st.dataframe(params, width="stretch", hide_index=True)
+
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        st.markdown("#### Agent-Based Modeling")
+        st.write("Setiap pelanggan diperlakukan sebagai agen individual dengan waktu datang, waktu menunggu, waktu pelayanan, batas kesabaran, dan status akhir.")
+    with a2:
+        st.markdown("#### Discrete Event Simulation")
+        st.write("Perubahan sistem terjadi pada event kedatangan, permintaan kiosk, awal pelayanan, akhir pelayanan, dan pembatalan antrean.")
+    with a3:
+        st.markdown("#### Monte Carlo")
+        st.write("Setiap skenario dijalankan 1.000 kali menggunakan seed berbeda agar kesimpulan tidak bergantung pada satu kejadian acak.")
+
+
+# ============================================================
+# TAB 2 — HASIL FINAL
+# ============================================================
+with tab_results:
+    st.header("Hasil Monte Carlo Final — 1.000 Iterasi per Skenario")
+    st.html(
+        '<div class="note-box">Bagian ini membaca hasil final dari CSV. Server tidak menghitung ulang 4.000 simulasi, sehingga dashboard lebih ringan dan konsisten dengan notebook serta laporan.</div>'
     )
 
-    st.html("""
-        <div class="box">
-            <div class="flow">
-                <span class="node">
-                    Datang
-                </span>
-
-                <span class="arrow">
-                    →
-                </span>
-
-                <span class="node">
-                    Menunggu
-                </span>
-
-                <span class="arrow">
-                    →
-                </span>
-
-                <span class="node">
-                    Dilayani
-                </span>
-
-                <span class="arrow">
-                    →
-                </span>
-
-                <span class="node">
-                    Selesai
-                </span>
-            </div>
-
-            <div class="flow">
-                <span class="node">
-                    Menunggu
-                </span>
-
-                <span class="arrow">
-                    → jika melebihi batas sabar →
-                </span>
-
-                <span class="node">
-                    Batal
-                </span>
-            </div>
-        </div>
-        """)
-
-    st.subheader(
-        "Formulasi Indikator"
-    )
-
-    formula_column_1, formula_column_2 = (
-        st.columns(2)
-    )
-
-    with formula_column_1:
-        st.html("""
-            <div class="formula">
-                Waktu tunggu =
-                mulai dilayani − waktu datang
-                <br>
-
-                Waktu sistem =
-                waktu keluar − waktu datang
-                <br>
-
-                Throughput =
-                pelanggan selesai / durasi (jam)
-            </div>
-            """)
-
-    with formula_column_2:
-        st.html("""
-            <div class="formula">
-                Utilisasi =
-                busy time / (kiosk × durasi) × 100%
-                <br>
-
-                Abandonment =
-                pelanggan batal / total pelanggan × 100%
-                <br>
-
-                Panjang antrean =
-                agen yang menunggu pada waktu t
-            </div>
-            """)
-
-    scenario_rows = []
-
-    for scenario_name in SCENARIOS:
-        config = CONFIGS[
-            scenario_name
+    if summary_final.empty or mc_final.empty:
+        st.error("File hasil Monte Carlo tidak tersedia.")
+    else:
+        display_columns = [
+            "scenario",
+            "avg_wait_time_mean",
+            "avg_wait_time_ci95_low",
+            "avg_wait_time_ci95_high",
+            "avg_queue_length_mean",
+            "utilization_percent_mean",
+            "throughput_per_hour_mean",
+            "abandonment_percent_mean",
         ]
-
-        scenario_rows.append(
-            {
-                "Skenario":
-                    scenario_name,
-
-                "Kiosk":
-                    config[
-                        "num_kiosks"
-                    ],
-
-                "Interval kedatangan":
-                    config[
-                        "mean_interarrival_time"
-                    ],
-
-                "Waktu pelayanan":
-                    config[
-                        "mean_service_time"
-                    ],
-
-                "Batas sabar":
-                    config[
-                        "patience_time"
-                    ],
-
-                "Keterangan":
-                    DESCRIPTIONS[
-                        scenario_name
-                    ],
+        display_summary = summary_final[display_columns].rename(
+            columns={
+                "scenario": "Skenario",
+                "avg_wait_time_mean": "Waktu tunggu",
+                "avg_wait_time_ci95_low": "CI 95% bawah",
+                "avg_wait_time_ci95_high": "CI 95% atas",
+                "avg_queue_length_mean": "Panjang antrean",
+                "utilization_percent_mean": "Utilisasi (%)",
+                "throughput_per_hour_mean": "Throughput/jam",
+                "abandonment_percent_mean": "Abandonment (%)",
             }
         )
+        numeric_cols = display_summary.select_dtypes(include="number").columns
+        display_summary[numeric_cols] = display_summary[numeric_cols].round(3)
+        st.dataframe(display_summary, width="stretch", hide_index=True)
 
-    st.subheader(
-        "Skenario What-If"
-    )
-
-    show_table(
-        pd.DataFrame(
-            scenario_rows
-        ),
-        2,
-    )
-
-
-# ============================================================
-# TAB 2 - HASIL EKSPERIMEN
-# ============================================================
-
-with result_tab:
-    st.subheader(
-        "Perbandingan Empat Skenario"
-    )
-
-    st.caption(
-        "Data aktif: "
-        f"{st.session_state['comparison_source']} · "
-        f"{st.session_state['comparison_iterations']} "
-        "iterasi per skenario."
-    )
-
-    with st.form(
-        "comparison_form"
-    ):
-        form_column_1, form_column_2, form_column_3 = (
-            st.columns(3)
+        metric_choice = st.selectbox(
+            "Pilih indikator grafik",
+            options=list(METRIC_LABELS),
+            format_func=lambda key: METRIC_LABELS[key],
+            key="final_metric_choice",
         )
-
-        with form_column_1:
-            comparison_iterations = (
-                st.select_slider(
-                    "Iterasi Monte Carlo",
-                    options=[
-                        30,
-                        50,
-                        100,
-                        200,
-                        500,
-                        1000,
-                    ],
-                    value=100,
-                )
-            )
-
-        with form_column_2:
-            comparison_duration = (
-                st.slider(
-                    "Durasi simulasi (menit)",
-                    min_value=120,
-                    max_value=720,
-                    value=480,
-                    step=60,
-                )
-            )
-
-        with form_column_3:
-            comparison_threshold = (
-                st.slider(
-                    "Ambang antrean reaktif",
-                    min_value=2,
-                    max_value=12,
-                    value=6,
-                    step=1,
-                )
-            )
-
-        run_comparison = (
-            st.form_submit_button(
-                "Jalankan ulang empat skenario",
-                type="primary",
-                use_container_width=True,
-            )
-        )
-
-    if run_comparison:
-        with st.spinner(
-            "Menjalankan eksperimen "
-            "Monte Carlo..."
-        ):
-            summary_dataframe, raw_dataframe = (
-                run_all_scenarios(
-                    int(
-                        comparison_iterations
-                    ),
-                    int(
-                        comparison_duration
-                    ),
-                    int(
-                        comparison_threshold
-                    ),
-                )
-            )
-
-        st.session_state[
-            "comparison_summary"
-        ] = summary_dataframe
-
-        st.session_state[
-            "comparison_raw"
-        ] = raw_dataframe
-
-        st.session_state[
-            "comparison_iterations"
-        ] = int(
-            comparison_iterations
-        )
-
-        st.session_state[
-            "comparison_source"
-        ] = "Hasil simulasi dashboard"
-
-        st.rerun()
-
-    summary_dataframe = ordered(
-        st.session_state[
-            "comparison_summary"
-        ]
-    )
-
-    shown_columns = [
-        "scenario",
-        "avg_wait_time",
-        "avg_queue_length",
-        "max_queue_length",
-        "utilization_percent",
-        "throughput_per_hour",
-        "abandonment_percent",
-        "served_customers",
-        "abandoned_customers",
-    ]
-
-    show_table(
-        summary_dataframe[
-            shown_columns
-        ],
-        3,
-    )
-
-    metric_options = {
-        "avg_wait_time":
-            "Waktu tunggu rata-rata (menit)",
-
-        "avg_queue_length":
-            "Panjang antrean rata-rata",
-
-        "utilization_percent":
-            "Utilisasi kiosk (%)",
-
-        "throughput_per_hour":
-            "Throughput (pelanggan/jam)",
-
-        "abandonment_percent":
-            "Pelanggan batal (%)",
-    }
-
-    selected_metric = st.selectbox(
-        "Indikator grafik",
-        options=list(
-            metric_options
-        ),
-        format_func=lambda value: (
-            metric_options[value]
-        ),
-    )
-
-    comparison_chart = px.bar(
-        summary_dataframe,
-        x="scenario",
-        y=selected_metric,
-        color="scenario",
-        color_discrete_map=COLORS,
-        text=selected_metric,
-        title=(
-            metric_options[
-                selected_metric
-            ]
-        ),
-    )
-
-    comparison_chart.update_traces(
-        texttemplate="%{text:.2f}",
-        textposition="outside",
-    )
-
-    comparison_chart.update_layout(
-        xaxis_title="Skenario",
-        yaxis_title=(
-            metric_options[
-                selected_metric
-            ]
-        ),
-        showlegend=False,
-        height=460,
-        margin=dict(
-            t=70,
-            b=70,
-        ),
-    )
-
-    st.plotly_chart(
-        comparison_chart,
-        use_container_width=True,
-    )
-
-    raw_comparison = (
-        st.session_state[
-            "comparison_raw"
-        ]
-    )
-
-    if raw_comparison is not None:
-        box_chart = px.box(
-            raw_comparison,
+        mean_column = f"{metric_choice}_mean"
+        chart_data = summary_final[["scenario", mean_column]].rename(columns={mean_column: "value"})
+        fig_bar = px.bar(
+            chart_data,
             x="scenario",
-            y="avg_wait_time",
-            color="scenario",
-            color_discrete_map=COLORS,
+            y="value",
+            text_auto=".2f",
+            labels={"scenario": "Skenario", "value": METRIC_LABELS[metric_choice]},
+            title=f"Perbandingan {METRIC_LABELS[metric_choice]}",
+        )
+        fig_bar.update_layout(showlegend=False, margin=dict(t=55, l=10, r=10, b=10))
+        st.plotly_chart(fig_bar, width="stretch")
+
+        fig_box = px.box(
+            mc_final,
+            x="scenario",
+            y=metric_choice,
             points=False,
-            title=(
-                "Sebaran Waktu Tunggu "
-                "Monte Carlo"
-            ),
+            category_orders={"scenario": SCENARIO_ORDER},
+            labels={"scenario": "Skenario", metric_choice: METRIC_LABELS[metric_choice]},
+            title=f"Sebaran 1.000 Replikasi — {METRIC_LABELS[metric_choice]}",
         )
-
-        box_chart.update_layout(
-            xaxis_title="Skenario",
-            yaxis_title=(
-                "Waktu tunggu (menit)"
-            ),
-            showlegend=False,
-            height=420,
-        )
-
-        st.plotly_chart(
-            box_chart,
-            use_container_width=True,
-        )
-
-    automatic_narrative = narrative(
-        summary_dataframe,
-        st.session_state[
-            "comparison_iterations"
-        ],
-    )
-
-    st.html((
-            '<div class="insight">'
-            '<b>Interpretasi:</b> '
-            f'{automatic_narrative}'
-            '</div>'
-        ))
-
-
-# ============================================================
-# TAB 3 - SIMULASI INTERAKTIF
-# ============================================================
-
-with simulation_tab:
-    st.subheader(
-        "Eksperimen Satu Skenario"
-    )
-
-    with st.form(
-        "single_form"
-    ):
-        row_1_column_1, row_1_column_2, row_1_column_3 = (
-            st.columns(3)
-        )
-
-        with row_1_column_1:
-            selected_scenario = (
-                st.selectbox(
-                    "Skenario",
-                    SCENARIOS,
-                )
-            )
-
-        selected_config = (
-            CONFIGS[
-                selected_scenario
-            ]
-        )
-
-        with row_1_column_2:
-            single_iterations = (
-                st.select_slider(
-                    "Iterasi Monte Carlo",
-                    options=[
-                        10,
-                        30,
-                        50,
-                        100,
-                        200,
-                        500,
-                    ],
-                    value=50,
-                )
-            )
-
-        with row_1_column_3:
-            single_seed = (
-                st.number_input(
-                    "Seed",
-                    min_value=1,
-                    max_value=999999,
-                    value=123,
-                )
-            )
-
-        row_2_column_1, row_2_column_2, row_2_column_3 = (
-            st.columns(3)
-        )
-
-        with row_2_column_1:
-            single_duration = (
-                st.slider(
-                    "Durasi (menit)",
-                    min_value=60,
-                    max_value=720,
-                    value=480,
-                    step=30,
-                )
-            )
-
-        with row_2_column_2:
-            single_kiosks = (
-                st.slider(
-                    "Jumlah kiosk",
-                    min_value=1,
-                    max_value=8,
-                    value=int(
-                        selected_config[
-                            "num_kiosks"
-                        ]
-                    ),
-                    step=1,
-                )
-            )
-
-        with row_2_column_3:
-            single_patience = (
-                st.slider(
-                    "Batas kesabaran",
-                    min_value=3.0,
-                    max_value=30.0,
-                    value=float(
-                        selected_config[
-                            "patience_time"
-                        ]
-                    ),
-                    step=1.0,
-                )
-            )
-
-        row_3_column_1, row_3_column_2, row_3_column_3 = (
-            st.columns(3)
-        )
-
-        with row_3_column_1:
-            single_interarrival = (
-                st.slider(
-                    "Interval kedatangan",
-                    min_value=1.0,
-                    max_value=8.0,
-                    value=float(
-                        selected_config[
-                            "mean_interarrival_time"
-                        ]
-                    ),
-                    step=0.25,
-                )
-            )
-
-        with row_3_column_2:
-            single_service = (
-                st.slider(
-                    "Waktu pelayanan",
-                    min_value=1.0,
-                    max_value=10.0,
-                    value=float(
-                        selected_config[
-                            "mean_service_time"
-                        ]
-                    ),
-                    step=0.25,
-                )
-            )
-
-        with row_3_column_3:
-            single_threshold = (
-                st.slider(
-                    "Ambang reaktif",
-                    min_value=2,
-                    max_value=12,
-                    value=6,
-                    step=1,
-                )
-            )
-
-        run_single = (
-            st.form_submit_button(
-                "Jalankan simulasi interaktif",
-                type="primary",
-                use_container_width=True,
-            )
-        )
-
-    if run_single:
-        with st.spinner(
-            "Menghitung simulasi..."
-        ):
-            one_summary, customers_dataframe, queue_dataframe = (
-                simulate_kiosk(
-                    seed=int(
-                        single_seed
-                    ),
-
-                    duration=int(
-                        single_duration
-                    ),
-
-                    num_kiosks=int(
-                        single_kiosks
-                    ),
-
-                    mean_interarrival_time=float(
-                        single_interarrival
-                    ),
-
-                    mean_service_time=float(
-                        single_service
-                    ),
-
-                    patience_time=float(
-                        single_patience
-                    ),
-
-                    scenario_name=
-                        selected_scenario,
-
-                    scenario_type=str(
-                        selected_config[
-                            "scenario_type"
-                        ]
-                    ),
-
-                    reactive_threshold=int(
-                        single_threshold
-                    ),
-                )
-            )
-
-            single_monte_carlo = (
-                run_monte_carlo(
-                    n_iterations=int(
-                        single_iterations
-                    ),
-
-                    duration=int(
-                        single_duration
-                    ),
-
-                    num_kiosks=int(
-                        single_kiosks
-                    ),
-
-                    mean_interarrival_time=float(
-                        single_interarrival
-                    ),
-
-                    mean_service_time=float(
-                        single_service
-                    ),
-
-                    patience_time=float(
-                        single_patience
-                    ),
-
-                    scenario_name=
-                        selected_scenario,
-
-                    scenario_type=str(
-                        selected_config[
-                            "scenario_type"
-                        ]
-                    ),
-
-                    start_seed=9000,
-
-                    reactive_threshold=int(
-                        single_threshold
-                    ),
-                )
-            )
-
-        st.session_state[
-            "single_result"
-        ] = (
-            one_summary,
-            customers_dataframe,
-            queue_dataframe,
-            single_monte_carlo,
-        )
-
-    if (
-        st.session_state[
-            "single_result"
-        ]
-        is None
-    ):
-        st.info(
-            "Atur parameter, lalu "
-            "jalankan simulasi."
-        )
-
-    else:
-        (
-            one_summary,
-            customers_dataframe,
-            queue_dataframe,
-            single_monte_carlo,
-        ) = st.session_state[
-            "single_result"
-        ]
-
-        mean_result = (
-            single_monte_carlo
-            .mean(
-                numeric_only=True
-            )
-        )
-
-        result_cards = (
-            st.columns(5)
-        )
-
-        card_values = [
-            (
-                "Waktu tunggu",
-                (
-                    f"{mean_result['avg_wait_time']:.2f} "
-                    "menit"
-                ),
-                "Rata-rata Monte Carlo",
-            ),
-            (
-                "Antrean",
-                (
-                    f"{mean_result['avg_queue_length']:.2f}"
-                ),
-                (
-                    "Maksimum "
-                    f"{mean_result['max_queue_length']:.2f}"
-                ),
-            ),
-            (
-                "Utilisasi",
-                (
-                    f"{mean_result['utilization_percent']:.2f}%"
-                ),
-                "Kapasitas terpakai",
-            ),
-            (
-                "Throughput",
-                (
-                    f"{mean_result['throughput_per_hour']:.2f}"
-                    "/jam"
-                ),
-                "Pelanggan selesai",
-            ),
-            (
-                "Pelanggan batal",
-                (
-                    f"{mean_result['abandonment_percent']:.2f}%"
-                ),
-                "Melewati batas sabar",
-            ),
-        ]
-
-        for column, card_value in zip(
-            result_cards,
-            card_values,
-        ):
-            with column:
-                metric_card(
-                    *card_value
-                )
-
-        chart_column_1, chart_column_2 = (
-            st.columns(2)
-        )
-
-        with chart_column_1:
-            queue_chart = go.Figure()
-
-            queue_chart.add_trace(
-                go.Scatter(
-                    x=queue_dataframe[
-                        "time"
-                    ],
-
-                    y=queue_dataframe[
-                        "queue_length"
-                    ],
-
-                    mode="lines",
-
-                    name="Menunggu",
-
-                    line=dict(
-                        color="#2563EB",
-                        width=2,
-                    ),
-
-                    fill="tozeroy",
-
-                    fillcolor=(
-                        "rgba(37,99,235,0.12)"
-                    ),
-                )
-            )
-
-            queue_chart.add_trace(
-                go.Scatter(
-                    x=queue_dataframe[
-                        "time"
-                    ],
-
-                    y=queue_dataframe[
-                        "in_service"
-                    ],
-
-                    mode="lines",
-
-                    name="Dilayani",
-
-                    line=dict(
-                        color="#D6A84B",
-                        width=2,
-                    ),
-                )
-            )
-
-            queue_chart.update_layout(
-                title="Dinamika Antrean",
-
-                xaxis_title=
-                    "Waktu (menit)",
-
-                yaxis_title=
-                    "Jumlah pelanggan",
-
-                height=420,
-            )
-
-            st.plotly_chart(
-                queue_chart,
-                use_container_width=True,
-            )
-
-        with chart_column_2:
-            histogram = px.histogram(
-                customers_dataframe,
-
-                x="wait_time",
-
-                color="state",
-
-                nbins=24,
-
-                color_discrete_map={
-                    "selesai":
-                        "#0F766E",
-
-                    "batal":
-                        "#B42318",
-                },
-
-                title=(
-                    "Distribusi Waktu Tunggu"
-                ),
-            )
-
-            histogram.update_layout(
-                xaxis_title=(
-                    "Waktu tunggu (menit)"
-                ),
-
-                yaxis_title=(
-                    "Jumlah pelanggan"
-                ),
-
-                height=420,
-            )
-
-            st.plotly_chart(
-                histogram,
-                use_container_width=True,
-            )
-
-        monte_carlo_box = px.box(
-            single_monte_carlo,
-
-            x="scenario",
-
-            y="avg_wait_time",
-
-            points="outliers",
-
-            title=(
-                "Sebaran Waktu Tunggu "
-                "Monte Carlo"
-            ),
-        )
-
-        monte_carlo_box.update_layout(
-            xaxis_title="",
-
-            yaxis_title=(
-                "Waktu tunggu (menit)"
-            ),
-
-            height=380,
-        )
-
-        st.plotly_chart(
-            monte_carlo_box,
-            use_container_width=True,
-        )
-
-        st.subheader(
-            "Data Pelanggan"
-        )
-
-        show_table(
-            customers_dataframe.head(
-                100
-            ),
-            3,
-        )
-
-        if (
-            mean_result[
-                "abandonment_percent"
-            ] > 10
-            or mean_result[
-                "avg_wait_time"
-            ] > 8
-        ):
-            recommendation = (
-                "Sistem belum optimal. "
-                "Tambahkan kiosk, percepat "
-                "pelayanan, atau gunakan "
-                "strategi preventif."
-            )
-
-            css_class = "warning"
-
-        elif (
-            mean_result[
-                "utilization_percent"
-            ] > 90
-        ):
-            recommendation = (
-                "Kiosk mendekati kapasitas "
-                "penuh dan rentan mengalami "
-                "antrean ketika terjadi "
-                "lonjakan kedatangan."
-            )
-
-            css_class = "warning"
-
+        fig_box.update_layout(margin=dict(t=55, l=10, r=10, b=10))
+        st.plotly_chart(fig_box, width="stretch")
+
+        st.subheader("Hasil uji statistik")
+        stats = data["Uji statistik"].copy()
+        if not stats.empty:
+            stats["p_value"] = stats["p_value"].map(lambda x: f"{x:.4g}")
+            stats["p_adjusted"] = stats["p_adjusted"].map(lambda x: f"{x:.4g}")
+            st.dataframe(stats, width="stretch", hide_index=True)
         else:
-            recommendation = (
-                "Kinerja sistem relatif "
-                "terkendali pada konfigurasi ini."
-            )
+            st.warning("File uji statistik tidak ditemukan.")
 
-            css_class = "insight"
-
-        st.html((
-                f'<div class="{css_class}">'
-                '<b>Rekomendasi:</b> '
-                f'{recommendation}'
-                '</div>'
-            ))
+        baseline = summary_final[summary_final["scenario"] == "Tanpa Intervensi"].iloc[0]
+        reactive = summary_final[summary_final["scenario"] == "Intervensi Reaktif"].iloc[0]
+        preventive = summary_final[summary_final["scenario"] == "Intervensi Preventif"].iloc[0]
+        high = summary_final[summary_final["scenario"] == "Beban Tinggi"].iloc[0]
+        st.subheader("Interpretasi otomatis")
+        st.write(
+            f"Intervensi preventif menghasilkan waktu tunggu terendah, yaitu "
+            f"{preventive['avg_wait_time_mean']:.2f} menit dengan abandonment "
+            f"{preventive['abandonment_percent_mean']:.2f}%. Intervensi reaktif "
+            f"menurunkan abandonment dari {baseline['abandonment_percent_mean']:.2f}% "
+            f"menjadi {reactive['abandonment_percent_mean']:.2f}%. Pada beban tinggi, "
+            f"utilisasi mencapai {high['utilization_percent_mean']:.2f}% dan abandonment "
+            f"meningkat menjadi {high['abandonment_percent_mean']:.2f}%, sehingga sistem "
+            "mendekati kapasitas penuh dan membutuhkan tambahan kapasitas atau strategi preventif."
+        )
 
 
 # ============================================================
-# TAB 4 - OPTIMASI KIOSK
+# TAB 3 — SIMULASI INTERAKTIF
 # ============================================================
-
-with optimization_tab:
-    st.subheader(
-        "Optimasi Jumlah Kiosk"
+with tab_simulation:
+    st.header("Simulasi Interaktif Ringan")
+    st.html(
+        '<div class="warning-box">Untuk menjaga kestabilan Streamlit Community Cloud, simulasi interaktif dibatasi maksimal 100 iterasi. Hasil penelitian final tetap berasal dari 1.000 iterasi per skenario pada file CSV.</div>'
     )
 
-    with st.form(
-        "optimization_form"
-    ):
-        opt_column_1, opt_column_2, opt_column_3 = (
-            st.columns(3)
+    with st.form("interactive_form"):
+        preset = st.selectbox("Preset skenario", SCENARIO_ORDER + ["Kustom"])
+        preset_config = SCENARIOS.get(preset, SCENARIOS["Tanpa Intervensi"])
+        c1, c2, c3, c4 = st.columns(4)
+        iterations = c1.select_slider("Iterasi", options=[10, 20, 30, 50, 75, 100], value=30)
+        seed_value = c2.number_input("Seed awal", min_value=1, max_value=999_999, value=2026, step=1)
+        duration_value = c3.number_input("Durasi (menit)", min_value=60, max_value=720, value=480, step=30)
+        kiosk_value = c4.number_input("Jumlah kiosk", min_value=1, max_value=8, value=int(preset_config["num_kiosks"]), step=1)
+
+        c5, c6, c7, c8 = st.columns(4)
+        arrival_value = c5.number_input(
+            "Interval kedatangan", min_value=0.5, max_value=15.0,
+            value=float(preset_config["mean_interarrival_time"]), step=0.1,
         )
-
-        with opt_column_1:
-            maximum_kiosk = (
-                st.slider(
-                    "Kiosk maksimum",
-                    min_value=3,
-                    max_value=8,
-                    value=6,
-                    step=1,
-                )
-            )
-
-        with opt_column_2:
-            optimization_iterations = (
-                st.select_slider(
-                    "Iterasi per konfigurasi",
-                    options=[
-                        20,
-                        30,
-                        50,
-                        100,
-                        200,
-                    ],
-                    value=50,
-                )
-            )
-
-        with opt_column_3:
-            optimization_duration = (
-                st.slider(
-                    "Durasi (menit)",
-                    min_value=120,
-                    max_value=720,
-                    value=480,
-                    step=60,
-                )
-            )
-
-        opt_column_4, opt_column_5, opt_column_6 = (
-            st.columns(3)
+        service_value = c6.number_input(
+            "Waktu pelayanan", min_value=0.5, max_value=15.0,
+            value=float(preset_config["mean_service_time"]), step=0.1,
         )
-
-        with opt_column_4:
-            optimization_interarrival = (
-                st.slider(
-                    "Interval kedatangan",
-                    min_value=1.0,
-                    max_value=8.0,
-                    value=3.0,
-                    step=0.25,
-                    key="opt_iat",
-                )
-            )
-
-        with opt_column_5:
-            optimization_service = (
-                st.slider(
-                    "Waktu pelayanan",
-                    min_value=1.0,
-                    max_value=10.0,
-                    value=4.0,
-                    step=0.25,
-                    key="opt_service",
-                )
-            )
-
-        with opt_column_6:
-            optimization_patience = (
-                st.slider(
-                    "Batas sabar",
-                    min_value=3.0,
-                    max_value=30.0,
-                    value=12.0,
-                    step=1.0,
-                    key="opt_patience",
-                )
-            )
-
-        run_optimization = (
-            st.form_submit_button(
-                "Jalankan optimasi",
-                type="primary",
-                use_container_width=True,
-            )
+        patience_value = c7.number_input(
+            "Batas kesabaran", min_value=1.0, max_value=60.0,
+            value=float(preset_config["patience_time"]), step=1.0,
         )
+        reactive_value = c8.number_input("Ambang antrean reaktif", min_value=1, max_value=20, value=4, step=1)
+        run_simulation = st.form_submit_button("Jalankan simulasi")
 
-    if run_optimization:
-        with st.spinner(
-            "Menguji jumlah kiosk..."
-        ):
-            optimization_summary, optimization_raw = (
-                optimize_kiosks(
-                    int(
-                        maximum_kiosk
-                    ),
-
-                    int(
-                        optimization_iterations
-                    ),
-
-                    int(
-                        optimization_duration
-                    ),
-
-                    float(
-                        optimization_interarrival
-                    ),
-
-                    float(
-                        optimization_service
-                    ),
-
-                    float(
-                        optimization_patience
-                    ),
+    if run_simulation:
+        scenario_type_value = preset_config["scenario_type"] if preset != "Kustom" else "base"
+        with st.spinner("Menjalankan simulasi ringan..."):
+            try:
+                sim_mc, sim_customers, sim_queue = run_light_monte_carlo(
+                    int(iterations), int(seed_value), int(duration_value), int(kiosk_value),
+                    float(arrival_value), float(service_value), float(patience_value),
+                    preset, scenario_type_value, int(reactive_value),
                 )
-            )
+                st.session_state["interactive_result"] = (sim_mc, sim_customers, sim_queue)
+            except Exception as error:
+                st.error(f"Simulasi gagal: {error}")
 
-        st.session_state[
-            "optimization"
-        ] = optimization_summary
+    if "interactive_result" in st.session_state:
+        sim_mc, sim_customers, sim_queue = st.session_state["interactive_result"]
+        mean_result = sim_mc.mean(numeric_only=True)
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Waktu tunggu", f"{mean_result['avg_wait_time']:.2f} menit")
+        m2.metric("Panjang antrean", f"{mean_result['avg_queue_length']:.2f}")
+        m3.metric("Utilisasi", f"{mean_result['utilization_percent']:.2f}%")
+        m4.metric("Throughput", f"{mean_result['throughput_per_hour']:.2f}/jam")
+        m5.metric("Abandonment", f"{mean_result['abandonment_percent']:.2f}%")
 
-        st.session_state[
-            "optimization_raw"
-        ] = optimization_raw
-
-    if (
-        st.session_state[
-            "optimization"
-        ]
-        is None
-    ):
-        st.info(
-            "Jalankan optimasi untuk "
-            "membandingkan beberapa jumlah kiosk."
-        )
-
-    else:
-        optimization_summary = (
-            st.session_state[
-                "optimization"
-            ]
-        )
-
-        show_table(
-            optimization_summary,
-            3,
-        )
-
-        feasible_result = (
-            optimization_summary[
-                (
-                    optimization_summary[
-                        "avg_wait_time"
-                    ] <= 1.0
-                )
-                & (
-                    optimization_summary[
-                        "abandonment_percent"
-                    ] <= 1.0
-                )
-                & (
-                    optimization_summary[
-                        "utilization_percent"
-                    ] <= 85.0
-                )
-            ]
-        )
-
-        if not feasible_result.empty:
-            recommended_kiosk = int(
-                feasible_result.iloc[0][
-                    "num_kiosks"
-                ]
-            )
-
-            st.html((
-                    '<div class="insight">'
-                    '<b>Rekomendasi:</b> '
-                    f'{recommended_kiosk} kiosk '
-                    'merupakan kapasitas minimum '
-                    'yang memenuhi waktu tunggu '
-                    '≤ 1 menit, pembatalan ≤ 1%, '
-                    'dan utilisasi ≤ 85%.'
-                    '</div>'
-                ))
-
+        if mean_result["abandonment_percent"] > 10 or mean_result["avg_wait_time"] > 8:
+            st.error("Sistem berada pada kondisi berat. Tambahkan kiosk atau gunakan strategi preventif.")
+        elif mean_result["utilization_percent"] > 90:
+            st.warning("Utilisasi melebihi 90%. Sistem mendekati kapasitas penuh.")
         else:
-            st.html("""
-                <div class="warning">
-                    Belum ada konfigurasi yang
-                    memenuhi seluruh sasaran.
-                </div>
-                """)
+            st.success("Sistem relatif terkendali pada parameter yang diuji.")
 
-        optimization_chart_column_1, optimization_chart_column_2 = (
-            st.columns(2)
+        left, right = st.columns(2)
+        with left:
+            if not sim_queue.empty:
+                fig_queue = px.line(
+                    sim_queue, x="time", y=["queue_length", "in_service"],
+                    labels={"time": "Waktu (menit)", "value": "Jumlah pelanggan", "variable": "Kondisi"},
+                    title="Dinamika antrean — replikasi pertama",
+                )
+                st.plotly_chart(fig_queue, width="stretch")
+        with right:
+            if not sim_customers.empty and "wait_time" in sim_customers.columns:
+                fig_hist = px.histogram(
+                    sim_customers, x="wait_time", color="state", nbins=30,
+                    labels={"wait_time": "Waktu tunggu (menit)", "count": "Pelanggan"},
+                    title="Distribusi waktu tunggu — replikasi pertama",
+                )
+                st.plotly_chart(fig_hist, width="stretch")
+
+        fig_mc = px.box(
+            sim_mc, y=["avg_wait_time", "utilization_percent", "abandonment_percent"],
+            points="all", title="Sebaran hasil simulasi interaktif",
+            labels={"value": "Nilai", "variable": "Indikator"},
         )
+        st.plotly_chart(fig_mc, width="stretch")
 
-        with optimization_chart_column_1:
-            waiting_chart = px.line(
-                optimization_summary,
-
-                x="num_kiosks",
-
-                y="avg_wait_time",
-
-                markers=True,
-
-                title=(
-                    "Jumlah Kiosk vs "
-                    "Waktu Tunggu"
-                ),
-            )
-
-            waiting_chart.update_layout(
-                xaxis_title=(
-                    "Jumlah kiosk"
-                ),
-
-                yaxis_title=(
-                    "Waktu tunggu (menit)"
-                ),
-
-                height=410,
-            )
-
-            st.plotly_chart(
-                waiting_chart,
-                use_container_width=True,
-            )
-
-        with optimization_chart_column_2:
-            cancellation_chart = px.line(
-                optimization_summary,
-
-                x="num_kiosks",
-
-                y="abandonment_percent",
-
-                markers=True,
-
-                title=(
-                    "Jumlah Kiosk vs "
-                    "Pembatalan"
-                ),
-            )
-
-            cancellation_chart.update_layout(
-                xaxis_title=(
-                    "Jumlah kiosk"
-                ),
-
-                yaxis_title=(
-                    "Pelanggan batal (%)"
-                ),
-
-                height=410,
-            )
-
-            st.plotly_chart(
-                cancellation_chart,
-                use_container_width=True,
-            )
-
-        utilization_chart = px.bar(
-            optimization_summary,
-
-            x="num_kiosks",
-
-            y="utilization_percent",
-
-            text="utilization_percent",
-
-            title=(
-                "Utilisasi berdasarkan "
-                "Jumlah Kiosk"
-            ),
+        st.subheader("Data pelanggan replikasi pertama")
+        st.dataframe(sim_customers.head(300), width="stretch", hide_index=True)
+        d1, d2 = st.columns(2)
+        d1.download_button(
+            "Download ringkasan simulasi CSV", csv_bytes(sim_mc),
+            "hasil_simulasi_interaktif.csv", "text/csv",
         )
-
-        utilization_chart.add_hline(
-            y=85,
-
-            line_dash="dash",
-
-            annotation_text=(
-                "Sasaran 85%"
-            ),
-        )
-
-        utilization_chart.update_traces(
-            texttemplate=(
-                "%{text:.1f}%"
-            )
-        )
-
-        utilization_chart.update_layout(
-            xaxis_title=(
-                "Jumlah kiosk"
-            ),
-
-            yaxis_title=(
-                "Utilisasi (%)"
-            ),
-
-            height=420,
-        )
-
-        st.plotly_chart(
-            utilization_chart,
-            use_container_width=True,
+        d2.download_button(
+            "Download data pelanggan CSV", csv_bytes(sim_customers),
+            "data_pelanggan_simulasi_interaktif.csv", "text/csv",
         )
 
 
 # ============================================================
-# TAB 5 - ANALISIS SENSITIVITAS
+# TAB 4 — UPLOAD DATASET
 # ============================================================
+with tab_upload:
+    st.header("Upload dan Validasi Dataset Eksternal")
+    st.write("Gunakan tab ini untuk membaca dataset antrean lain dalam format CSV atau Excel, memetakan kolom, memeriksa kualitas data, menghitung metrik, dan mengunduh hasil yang sudah distandardisasi.")
 
-with sensitivity_tab:
-    st.subheader(
-        "Analisis Sensitivitas"
-    )
-
-    with st.form(
-        "sensitivity_form"
-    ):
-        sens_column_1, sens_column_2, sens_column_3 = (
-            st.columns(3)
-        )
-
-        with sens_column_1:
-            sensitivity_parameter = (
-                st.selectbox(
-                    "Parameter",
-                    [
-                        "Interval kedatangan",
-                        "Waktu pelayanan",
-                        "Batas kesabaran",
-                    ],
-                )
-            )
-
-        with sens_column_2:
-            sensitivity_iterations = (
-                st.select_slider(
-                    "Iterasi per nilai",
-                    options=[
-                        20,
-                        30,
-                        50,
-                        100,
-                        200,
-                    ],
-                    value=50,
-                )
-            )
-
-        with sens_column_3:
-            sensitivity_kiosk = (
-                st.slider(
-                    "Jumlah kiosk",
-                    min_value=1,
-                    max_value=6,
-                    value=2,
-                    step=1,
-                )
-            )
-
-        run_sensitivity = (
-            st.form_submit_button(
-                "Jalankan sensitivitas",
-                type="primary",
-                use_container_width=True,
-            )
-        )
-
-    sensitivity_values = {
-        "Interval kedatangan":
-            tuple(
-                np.round(
-                    np.linspace(
-                        1.5,
-                        5.0,
-                        8,
-                    ),
-                    2,
-                )
-            ),
-
-        "Waktu pelayanan":
-            tuple(
-                np.round(
-                    np.linspace(
-                        2.0,
-                        7.0,
-                        8,
-                    ),
-                    2,
-                )
-            ),
-
-        "Batas kesabaran":
-            tuple(
-                np.round(
-                    np.linspace(
-                        5.0,
-                        20.0,
-                        8,
-                    ),
-                    2,
-                )
-            ),
-    }
-
-    if run_sensitivity:
-        with st.spinner(
-            "Menghitung sensitivitas..."
-        ):
-            st.session_state[
-                "sensitivity"
-            ] = sensitivity_analysis(
-                sensitivity_parameter,
-
-                sensitivity_values[
-                    sensitivity_parameter
-                ],
-
-                int(
-                    sensitivity_iterations
-                ),
-
-                int(
-                    sensitivity_kiosk
-                ),
-            )
-
-    if (
-        st.session_state[
-            "sensitivity"
-        ]
-        is None
-    ):
-        st.info(
-            "Jalankan analisis untuk melihat "
-            "pengaruh perubahan parameter."
-        )
-
+    uploaded_file = st.file_uploader("Upload dataset", type=["csv", "xlsx", "xls"])
+    if uploaded_file is None:
+        st.info("Belum ada dataset yang diunggah.")
     else:
-        sensitivity_dataframe = (
-            st.session_state[
-                "sensitivity"
+        try:
+            uploaded_raw = read_uploaded_table(uploaded_file)
+        except Exception as error:
+            st.error(f"File tidak dapat dibaca: {error}")
+            uploaded_raw = pd.DataFrame()
+
+        if not uploaded_raw.empty:
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric("Jumlah baris", f"{len(uploaded_raw):,}")
+            q2.metric("Jumlah kolom", f"{uploaded_raw.shape[1]}")
+            q3.metric("Missing value", f"{int(uploaded_raw.isna().sum().sum()):,}")
+            q4.metric("Duplikasi", f"{int(uploaded_raw.duplicated().sum()):,}")
+            st.dataframe(uploaded_raw.head(100), width="stretch", hide_index=True)
+
+            st.subheader("Pemetaan kolom")
+            options = [None] + uploaded_raw.columns.tolist()
+            canonical = [
+                "customer_id", "scenario", "arrival_time", "start_service_time",
+                "departure_time", "wait_time", "service_time", "system_time",
+                "state", "patience_time", "num_kiosks", "mean_interarrival_time",
+                "mean_service_time", "duration", "seed",
             ]
-        )
+            mapping: dict[str, str | None] = {}
+            columns = st.columns(3)
+            for index, target in enumerate(canonical):
+                default_index = options.index(target) if target in options else 0
+                mapping[target] = columns[index % 3].selectbox(
+                    target, options=options, index=default_index,
+                    format_func=lambda value: "(Tidak tersedia)" if value is None else str(value),
+                    key=f"map_{target}",
+                )
 
-        show_table(
-            sensitivity_dataframe,
-            3,
-        )
+            cleaned = apply_column_mapping(uploaded_raw, mapping)
+            negative_columns = [
+                col for col in ["wait_time", "service_time", "system_time"]
+                if col in cleaned.columns and (cleaned[col] < 0).any()
+            ]
+            if negative_columns:
+                st.warning("Ditemukan nilai negatif pada: " + ", ".join(negative_columns))
 
-        sensitivity_metrics = {
-            "avg_wait_time":
-                "Waktu tunggu (menit)",
+            metrics = uploaded_metrics(cleaned)
+            u1, u2, u3, u4, u5 = st.columns(5)
+            u1.metric("Total data", f"{metrics['total']:,}")
+            u2.metric("Selesai", f"{metrics['served']:,}")
+            u3.metric("Batal", f"{metrics['abandoned']:,}")
+            u4.metric("Waktu tunggu", format_number(metrics["avg_wait"]) + " menit")
+            u5.metric("Abandonment", format_number(metrics["abandonment"]) + "%")
 
-            "avg_queue_length":
-                "Panjang antrean",
+            if "wait_time" in cleaned.columns:
+                plot_df = cleaned.dropna(subset=["wait_time"]).copy()
+                if not plot_df.empty:
+                    color_col = "state" if "state" in plot_df.columns else None
+                    fig_upload_hist = px.histogram(
+                        plot_df, x="wait_time", color=color_col, nbins=35,
+                        title="Distribusi waktu tunggu dataset upload",
+                    )
+                    st.plotly_chart(fig_upload_hist, width="stretch")
 
-            "utilization_percent":
-                "Utilisasi (%)",
+            if "scenario" in cleaned.columns and "wait_time" in cleaned.columns:
+                scenario_stats = (
+                    cleaned.groupby("scenario", dropna=False)["wait_time"]
+                    .agg(["count", "mean", "median", "max"])
+                    .reset_index()
+                )
+                st.subheader("Ringkasan per skenario")
+                st.dataframe(scenario_stats, width="stretch", hide_index=True)
 
-            "throughput_per_hour":
-                "Throughput/jam",
-
-            "abandonment_percent":
-                "Pelanggan batal (%)",
-        }
-
-        sensitivity_metric = (
-            st.selectbox(
-                "Indikator",
-                options=list(
-                    sensitivity_metrics
-                ),
-                format_func=lambda value: (
-                    sensitivity_metrics[
-                        value
-                    ]
-                ),
-                key="sens_metric",
+            st.download_button(
+                "Download dataset yang sudah distandardisasi",
+                csv_bytes(cleaned),
+                "dataset_antrean_terstandardisasi.csv",
+                "text/csv",
             )
-        )
-
-        sensitivity_chart = px.line(
-            sensitivity_dataframe,
-
-            x="value",
-
-            y=sensitivity_metric,
-
-            markers=True,
-
-            title=(
-                "Pengaruh "
-                f"{sensitivity_dataframe.iloc[0]['parameter']} "
-                "terhadap "
-                f"{sensitivity_metrics[sensitivity_metric]}"
-            ),
-        )
-
-        sensitivity_chart.update_layout(
-            xaxis_title=(
-                sensitivity_dataframe.iloc[0][
-                    "parameter"
-                ]
-            ),
-
-            yaxis_title=(
-                sensitivity_metrics[
-                    sensitivity_metric
-                ]
-            ),
-
-            height=450,
-        )
-
-        st.plotly_chart(
-            sensitivity_chart,
-            use_container_width=True,
-        )
 
 
 # ============================================================
-# TAB 6 - METODOLOGI DAN EKSPOR
+# TAB 5 — OPTIMASI
 # ============================================================
-
-with export_tab:
-    st.subheader(
-        "Metodologi"
+with tab_optimization:
+    st.header("Optimasi Jumlah Kiosk")
+    mode_optimization = st.radio(
+        "Sumber hasil", ["Hasil final notebook", "Hitung konfigurasi ringan"], horizontal=True
     )
 
+    if mode_optimization == "Hasil final notebook":
+        optimization = data["Optimasi kiosk"].copy()
+    else:
+        with st.form("optimization_form"):
+            o1, o2, o3, o4 = st.columns(4)
+            max_kiosks = o1.number_input("Kiosk maksimum", min_value=2, max_value=8, value=5, step=1)
+            opt_iterations = o2.select_slider("Iterasi per kiosk", options=[10, 20, 30, 40, 50], value=30)
+            opt_duration = o3.number_input("Durasi", min_value=60, max_value=720, value=480, step=30)
+            opt_seed = o4.number_input("Seed", min_value=1, max_value=999_999, value=3030, step=1)
+            o5, o6, o7 = st.columns(3)
+            opt_arrival = o5.number_input("Interval kedatangan", min_value=0.5, max_value=15.0, value=3.0, step=0.1)
+            opt_service = o6.number_input("Waktu pelayanan", min_value=0.5, max_value=15.0, value=4.0, step=0.1)
+            opt_patience = o7.number_input("Batas kesabaran", min_value=1.0, max_value=60.0, value=12.0, step=1.0)
+            run_opt = st.form_submit_button("Jalankan optimasi ringan")
+        if run_opt:
+            with st.spinner("Menghitung optimasi ringan..."):
+                st.session_state["opt_result"] = run_light_optimization(
+                    int(max_kiosks), int(opt_iterations), int(opt_seed), int(opt_duration),
+                    float(opt_arrival), float(opt_service), float(opt_patience),
+                )
+        optimization = st.session_state.get("opt_result", pd.DataFrame())
+
+    if optimization.empty:
+        st.info("Belum ada hasil optimasi.")
+    else:
+        optimization = optimization.sort_values("num_kiosks")
+        st.dataframe(optimization.round(3), width="stretch", hide_index=True)
+        targets = optimization[
+            (optimization["avg_wait_time"] <= 1.0)
+            & (optimization["abandonment_percent"] <= 1.0)
+            & (optimization["utilization_percent"] <= 85.0)
+        ]
+        if not targets.empty:
+            recommendation = int(targets.iloc[0]["num_kiosks"])
+            st.success(f"Rekomendasi minimum berdasarkan target layanan: {recommendation} kiosk.")
+        else:
+            st.warning("Belum ada konfigurasi yang memenuhi seluruh target layanan.")
+
+        g1, g2 = st.columns(2)
+        with g1:
+            fig_opt_wait = px.line(
+                optimization, x="num_kiosks", y="avg_wait_time", markers=True,
+                title="Jumlah kiosk terhadap waktu tunggu",
+                labels={"num_kiosks": "Jumlah kiosk", "avg_wait_time": "Waktu tunggu (menit)"},
+            )
+            fig_opt_wait.add_hline(y=1.0, line_dash="dash", annotation_text="Target 1 menit")
+            st.plotly_chart(fig_opt_wait, width="stretch")
+        with g2:
+            fig_opt_util = px.line(
+                optimization, x="num_kiosks", y="utilization_percent", markers=True,
+                title="Jumlah kiosk terhadap utilisasi",
+                labels={"num_kiosks": "Jumlah kiosk", "utilization_percent": "Utilisasi (%)"},
+            )
+            fig_opt_util.add_hline(y=85.0, line_dash="dash", annotation_text="Batas 85%")
+            st.plotly_chart(fig_opt_util, width="stretch")
+
+        st.download_button(
+            "Download hasil optimasi CSV", csv_bytes(optimization),
+            "ringkasan_optimasi_dashboard.csv", "text/csv",
+        )
+
+
+# ============================================================
+# TAB 6 — SENSITIVITAS
+# ============================================================
+with tab_sensitivity:
+    st.header("Analisis Sensitivitas")
+    sensitivity_mode = st.radio(
+        "Sumber hasil sensitivitas", ["Hasil final notebook", "Hitung parameter lain"], horizontal=True
+    )
+
+    if sensitivity_mode == "Hasil final notebook":
+        sensitivity = data["Sensitivitas"].copy()
+        sensitivity_parameter = "mean_interarrival_time"
+    else:
+        with st.form("sensitivity_form"):
+            sensitivity_parameter = st.selectbox(
+                "Parameter yang diuji",
+                ["mean_interarrival_time", "mean_service_time", "patience_time"],
+                format_func=lambda value: {
+                    "mean_interarrival_time": "Interval kedatangan",
+                    "mean_service_time": "Waktu pelayanan",
+                    "patience_time": "Batas kesabaran",
+                }[value],
+            )
+            s1, s2, s3, s4 = st.columns(4)
+            sens_min = s1.number_input("Nilai minimum", min_value=0.5, max_value=30.0, value=2.0, step=0.5)
+            sens_max = s2.number_input("Nilai maksimum", min_value=0.5, max_value=30.0, value=5.0, step=0.5)
+            sens_points = s3.number_input("Jumlah titik", min_value=3, max_value=7, value=4, step=1)
+            sens_iterations = s4.select_slider("Iterasi per titik", options=[10, 20, 30, 40, 50], value=30)
+            s5, s6, s7, s8 = st.columns(4)
+            sens_kiosks = s5.number_input("Jumlah kiosk", min_value=1, max_value=8, value=2, step=1)
+            sens_arrival = s6.number_input("Interval dasar", min_value=0.5, max_value=15.0, value=3.0, step=0.1)
+            sens_service = s7.number_input("Pelayanan dasar", min_value=0.5, max_value=15.0, value=4.0, step=0.1)
+            sens_patience = s8.number_input("Kesabaran dasar", min_value=1.0, max_value=60.0, value=12.0, step=1.0)
+            run_sens = st.form_submit_button("Jalankan sensitivitas ringan")
+        if run_sens:
+            if sens_max <= sens_min:
+                st.error("Nilai maksimum harus lebih besar daripada nilai minimum.")
+            else:
+                values = tuple(np.linspace(float(sens_min), float(sens_max), int(sens_points)).round(4))
+                with st.spinner("Menghitung sensitivitas..."):
+                    st.session_state["sens_result"] = run_light_sensitivity(
+                        values, sensitivity_parameter, int(sens_iterations), 4040, 480,
+                        int(sens_kiosks), float(sens_arrival), float(sens_service), float(sens_patience),
+                    )
+        sensitivity = st.session_state.get("sens_result", pd.DataFrame())
+
+    if sensitivity.empty:
+        st.info("Belum ada hasil sensitivitas.")
+    else:
+        st.dataframe(sensitivity.round(3), width="stretch", hide_index=True)
+        long_sens = sensitivity.melt(
+            id_vars=[sensitivity_parameter],
+            value_vars=["avg_wait_time", "avg_queue_length", "utilization_percent", "abandonment_percent"],
+            var_name="metric", value_name="value",
+        )
+        fig_sens = px.line(
+            long_sens, x=sensitivity_parameter, y="value", color="metric", markers=True,
+            title="Perubahan kinerja terhadap parameter yang diuji",
+            labels={sensitivity_parameter: "Nilai parameter", "value": "Nilai indikator", "metric": "Indikator"},
+        )
+        st.plotly_chart(fig_sens, width="stretch")
+        st.download_button(
+            "Download hasil sensitivitas CSV", csv_bytes(sensitivity),
+            "hasil_sensitivitas_dashboard.csv", "text/csv",
+        )
+
+
+# ============================================================
+# TAB 7 — METODOLOGI DAN EKSPOR
+# ============================================================
+with tab_method:
+    st.header("Metodologi, Asumsi, dan Ekspor")
     methodology = pd.DataFrame(
-        [
-            [
-                "Pendekatan",
-                (
-                    "Agent-Based Modeling dan "
-                    "Discrete Event Simulation"
-                ),
+        {
+            "Komponen": [
+                "Pendekatan", "Agen", "Resource", "Distribusi kedatangan",
+                "Distribusi pelayanan", "Disiplin antrean", "Ketidakpastian",
+                "Horizon", "Status akhir",
             ],
-            [
-                "Agen",
+            "Penerapan": [
+                "Agent-Based Modeling dan Discrete Event Simulation",
                 "Pelanggan bioskop",
-            ],
-            [
-                "Resource",
                 "Self-service kiosk",
+                "Eksponensial",
+                "Lognormal",
+                "First Come, First Served",
+                "Monte Carlo dengan seed berbeda",
+                "480 menit; kedatangan berhenti pada akhir horizon dan sistem dikuras",
+                "selesai atau batal",
             ],
-            [
-                "Kedatangan",
-                "Distribusi eksponensial",
-            ],
-            [
-                "Pelayanan",
-                "Distribusi lognormal",
-            ],
-            [
-                "Disiplin antrean",
-                "First come, first served",
-            ],
-            [
-                "Ketidakpastian",
-                (
-                    "Monte Carlo dengan "
-                    "seed berbeda"
-                ),
-            ],
-        ],
-        columns=[
-            "Komponen",
-            "Implementasi",
-        ],
+        }
     )
+    st.dataframe(methodology, width="stretch", hide_index=True)
 
-    show_table(
-        methodology,
-        2,
-    )
-
-    st.subheader(
-        "Asumsi dan Batasan"
-    )
-
-    st.html("""
-        1. Setiap pelanggan hanya membutuhkan satu kiosk.
-        2. Setiap kiosk hanya melayani satu pelanggan pada satu waktu.
-        3. Pelanggan mengikuti antrean *first come, first served*.
-        4. Pelanggan meninggalkan antrean setelah batas kesabaran terlewati.
-        5. Model belum memasukkan kerusakan kiosk dan variasi jenis transaksi.
-        6. Hasil simulasi perlu dikalibrasi dengan data nyata sebelum digunakan untuk keputusan operasional.
+    st.subheader("Asumsi dan batasan")
+    st.markdown(
+        """
+        - Semua kiosk dianggap memiliki kemampuan pelayanan yang sama.
+        - Satu kiosk hanya melayani satu pelanggan pada satu waktu.
+        - Tidak ada prioritas pelanggan dan kerusakan kiosk.
+        - Parameter bersifat sintetis dan belum dikalibrasi menggunakan data bioskop nyata.
+        - Hasil digunakan untuk perbandingan kebijakan, bukan prediksi operasional absolut.
         """
     )
 
-    export_summary = (
-        st.session_state[
-            "comparison_summary"
-        ]
+    st.subheader("Download data final")
+    available_downloads = {
+        label: DATA_DIR / filename
+        for label, filename in REQUIRED_DATA_FILES.items()
+        if (DATA_DIR / filename).exists()
+    }
+    selected_download = st.selectbox("Pilih file", list(available_downloads))
+    selected_path = available_downloads[selected_download]
+    st.download_button(
+        "Download file terpilih",
+        selected_path.read_bytes(),
+        selected_path.name,
+        "text/csv",
     )
 
-    export_raw = (
-        st.session_state[
-            "comparison_raw"
-        ]
+    narrative = (
+        "Dashboard menggunakan Agent-Based Modeling dan Discrete Event Simulation untuk "
+        "merepresentasikan pelanggan sebagai agen yang datang, menunggu, dilayani, selesai, "
+        "atau meninggalkan antrean. Hasil final diperoleh dari 1.000 iterasi Monte Carlo per "
+        "skenario. Intervensi preventif memberikan waktu tunggu dan abandonment terendah, "
+        "sedangkan beban tinggi menyebabkan utilisasi mendekati kapasitas penuh. Optimasi "
+        "menunjukkan bahwa tiga kiosk merupakan kapasitas minimum yang memenuhi target waktu "
+        "tunggu maksimal satu menit, abandonment maksimal satu persen, dan utilisasi maksimal "
+        "delapan puluh lima persen pada parameter dasar."
+    )
+    st.subheader("Narasi ringkas siap laporan")
+    st.text_area("Narasi", narrative, height=180)
+    st.download_button(
+        "Download narasi TXT", narrative.encode("utf-8"),
+        "narasi_hasil_dashboard.txt", "text/plain",
     )
 
-    result_narrative = narrative(
-        export_summary,
-        st.session_state[
-            "comparison_iterations"
-        ],
-    )
-
-    st.subheader(
-        "Narasi Hasil"
-    )
-
-    st.text_area(
-        "Narasi siap laporan",
-        result_narrative,
-        height=170,
-    )
-
-    download_column_1, download_column_2, download_column_3 = (
-        st.columns(3)
-    )
-
-    with download_column_1:
-        st.download_button(
-            label=(
-                "Download ringkasan CSV"
-            ),
-
-            data=(
-                export_summary
-                .to_csv(
-                    index=False
-                )
-                .encode(
-                    "utf-8"
-                )
-            ),
-
-            file_name=(
-                "ringkasan_skenario_"
-                "kiosk_bioskop.csv"
-            ),
-
-            mime="text/csv",
-
-            use_container_width=True,
-        )
-
-    with download_column_2:
-        if export_raw is None:
-            raw_data = b""
-            raw_disabled = True
-
-        else:
-            raw_data = (
-                export_raw
-                .to_csv(
-                    index=False
-                )
-                .encode(
-                    "utf-8"
-                )
-            )
-
-            raw_disabled = False
-
-        st.download_button(
-            label=(
-                "Download Monte Carlo CSV"
-            ),
-
-            data=raw_data,
-
-            file_name=(
-                "hasil_monte_carlo_"
-                "kiosk_bioskop.csv"
-            ),
-
-            mime="text/csv",
-
-            use_container_width=True,
-
-            disabled=raw_disabled,
-        )
-
-    with download_column_3:
-        report_text = (
-            "RINGKASAN SIMULASI "
-            "KIOSK BIOSKOP\n\n"
-
-            f"Tanggal ekspor: "
-            f"{datetime.now():%d-%m-%Y %H:%M}\n"
-
-            f"Iterasi per skenario: "
-            f"{st.session_state['comparison_iterations']}\n\n"
-
-            f"{result_narrative}\n"
-        )
-
-        st.download_button(
-            label=(
-                "Download narasi TXT"
-            ),
-
-            data=(
-                report_text.encode(
-                    "utf-8"
-                )
-            ),
-
-            file_name=(
-                "ringkasan_analisis_"
-                "kiosk_bioskop.txt"
-            ),
-
-            mime="text/plain",
-
-            use_container_width=True,
-        )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.markdown(
+st.html(
     """
     <div class="footer">
-        Dashboard Simulasi Antrean
-        Self-Service Kiosk Bioskop ·
-        hasil awal mengacu pada notebook
-        project dengan 100 iterasi Monte Carlo.
+      Dashboard akademik simulasi antrean kiosk bioskop. Hasil final berasal dari notebook Monte Carlo 1.000 iterasi; simulasi interaktif dibatasi untuk menjaga kestabilan server.
     </div>
-    """)
+    """
+)

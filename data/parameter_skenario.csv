@@ -1,0 +1,5 @@
+scenario_name,scenario_type,num_kiosks,mean_interarrival_time,mean_service_time,patience_time
+Tanpa Intervensi,base,2,3.0,4.0,12.0
+Intervensi Reaktif,reactive,2,3.0,4.0,12.0
+Intervensi Preventif,preventive,3,3.0,3.6,12.0
+Beban Tinggi,high_load,2,2.0,4.5,10.0
