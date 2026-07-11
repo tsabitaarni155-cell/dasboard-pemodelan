@@ -5,3 +5,5 @@ venv/
 .env
 .DS_Store
 .streamlit/secrets.toml
+
+backup_sebelum_update_*/
